@@ -8,7 +8,7 @@ library(dplyr)
 
 # 読み込み設定
 loc <- locale(encoding = "SHIFT-JIS")
-
+setwd("E:/R")
 # 必要な列だけ読み込み（.default = "c" は他列を文字列扱いにして後で選択）
 cre_2012 <- read_csv("jin/cre_over18/cre_2012_over18.csv",
                      locale = loc, skip = 3,
@@ -36,23 +36,9 @@ cre_2012_2013_sub <- cre_2012_2013 %>%
     .groups = "drop"
   )
 cre_2012_2013_sub
-#判定期間にデータがないものはnon-recoveryに#####
-jin1_Eligibile_include_code <- jin1_Eligibile %>%
-  left_join(cre_2012_2013_sub, by = c("id", "date")) %>%
-  filter(exclude == "include") %>%
-  mutate(
-    jin_label = case_when(
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
-      TRUE ~ NA_character_
-    )
-  )
-jin1_Eligibile_include_code <- jin1_Eligibile_include_code %>%
-  mutate(jin_label = factor(jin_label, levels = c("nonAKD", "Non-Recovery", "Recovery")))
-
+library(readr)
+setwd("E:/R")
+jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 #判定期間にデータがないものを除外#####
 jin1_Eligibile_include_code <- jin1_Eligibile %>%
   left_join(cre_2012_2013_sub, by = c("id", "date")) %>%
@@ -68,7 +54,11 @@ jin1_Eligibile_include_code <- jin1_Eligibile %>%
       TRUE ~ NA_character_
     )
   ) %>%
-  mutate(jin_label = factor(jin_label, levels = c("nonAKD", "No-data", "Non-Recovery", "Recovery")))
+  mutate(jin_label = factor(jin_label, levels = c("nonAKD", "Non-Recovery", "Recovery", "No-data")))
+library(dplyr)
+jin1_Eligibile_include_code %>%
+  group_by(jin_label) %>%
+  summarise(unique_ids = n_distinct(id), .groups = "drop")
 
 
 #####出現回数をみる####
@@ -228,8 +218,8 @@ print(main_code_by_label_top10_named_full, n = Inf)
 
 # jin_labelごとの総患者数（指定値）
 label_totals <- tibble(
-  jin_label = c("nonAKD", "Non-Recovery", "Recovery"),
-  total_patients = c(14406, 227, 114)
+  jin_label = c("nonAKD", "Non-Recovery", "Recovery", "No-data"),
+  total_patients = c(14406, 100, 114, 127)
 )
 
 # 構成比を計算
@@ -253,65 +243,68 @@ write_xlsx(main_code_ratio_en, path = "main_code_ratio.xlsx")
 #積み上げ縦棒####
 library(dplyr)
 library(ggplot2)
+library(forcats)
 
-# 1) 上位5位（同率はすべて採用）＋その他
+# --- 1) 上位5位（同率はすべて採用）＋Other ---
 main_code_ratio_top5 <- main_code_ratio_en %>%
   filter(!is.na(jin_label), !is.na(clinical_department_en), !is.na(pct)) %>%
   group_by(jin_label) %>%
   mutate(rank = dense_rank(desc(pct))) %>%
   mutate(clinical_department_en = if_else(rank <= 5, clinical_department_en, "Other")) %>%
-  ungroup() %>%  # ★ いったん解除してから .by を使う
+  ungroup() %>%
   summarise(pct = sum(pct), .by = c(jin_label, clinical_department_en)) %>%
   group_by(jin_label) %>%
   mutate(pct = 100 * pct / sum(pct)) %>%
   ungroup()
 
-
-# 2) 色パレット（指定どおり）
-color_palette_filtered <- c(
-  "Digestive Surgery"         = "#1B9E77",  # 緑系
-  "Endocrinology"             = "#E41A1C",  # 赤系
-  "Hematology"                = "#377EB8",  # 青系
-  "Obstetrics and Gynecology" = "#E78AC3",  # ピンク系
-  "Other"                     = "#BEBEBE",  # グレー（その他）
-  "Urology"                   = "#FFA07A",  # 薄い赤系（ライトサーモン）
-  "Cardiology"                = "#984EA3",  # 紫
-  "Cardiovascular Surgery"    = "#66C2A5",  # ティール
-  "Emergency Medicine"        = "#FF7F00",  # オレンジ
-  "Otorhinolaryngology"       = "#FFD700"   # 黄色
-)
-library(dplyr)
-library(ggplot2)
-library(forcats)
-
-# main_code_ratio_top5 : すでに作成済み（jin_label, clinical_department_en, pct がある想定）
-
-# --- 1) まずはプロット用の基礎データ（df_plot2）を作る ---
+# --- 2) プロット用データと凡例レベル（Otherを最後） ---
 df_plot2 <- main_code_ratio_top5 %>%
-  transmute(
-    jin_label,
-    dept = clinical_department_en,
-    pct  = pct
-  ) %>%
-  # dept をファクター化（この後でレベル順を上書き）
-  mutate(dept_fac = factor(dept))
+  transmute(jin_label, dept = clinical_department_en, pct)
 
-# --- 2) 凡例レベルの順序（Other を最後に） ---
-legend_lvls <- levels(fct_unique(df_plot2$dept_fac))
-legend_lvls <- c(setdiff(legend_lvls, "Other"), "Other")
+dept_levels_all <- df_plot2 %>% distinct(dept) %>% pull(dept)
+dept_levels_all <- c(setdiff(dept_levels_all, "Other"), "Other")
 
-# パレットを凡例レベルに合わせて並べ替え（存在しない科は落とす）
-local_palette <- color_palette_filtered[legend_lvls]
-# 万一パレットにないキーがあればグレーで埋める
-need_fill <- is.na(local_palette)
-local_palette[need_fill] <- "#BEBEBE"  # フォールバック
+# --- 3) 既定パレット + 未定義科を自動着色（Otherは常にグレー） ---
+base_palette <- c(
+  "Digestive Surgery"         = "#1B9E77",
+  "Endocrinology"             = "#E41A1C",
+  "Hematology"                = "#377EB8",
+  "Obstetrics and Gynecology" = "#E78AC3",
+  "Urology"                   = "#FFA07A",
+  "Cardiology"                = "#984EA3",
+  "Cardiovascular Surgery"    = "#66C2A5",
+  "Emergency Medicine"        = "#FF7F00",
+  "Otorhinolaryngology"       = "#FFD700",
+  "Other"                     = "#BEBEBE"  # ←固定
+)
+
+# 未定義キー（Other以外）を抽出
+missing_keys <- setdiff(dept_levels_all, names(base_palette))
+missing_keys <- setdiff(missing_keys, "Other")
+n_missing <- length(missing_keys)
+
+# 均等色相の自動配色（再現性あり・見分けやすいトーン）
+auto_cols <- if (n_missing > 0) {
+  grDevices::hcl(
+    h = seq(15, 375, length.out = n_missing + 1)[1:n_missing],
+    c = 60, l = 65
+  )
+} else character(0)
+names(auto_cols) <- missing_keys
+
+# マージして凡例順に並べ替え（Otherは必ずグレーで上書き）
+local_palette <- c(base_palette, auto_cols)
+local_palette["Other"] <- "#BEBEBE"
+local_palette <- local_palette[dept_levels_all]
+
+# --- 4) 上から積み上げ座標計算（Otherを最上段） ---
 df_rect_top <- df_plot2 %>%
+  mutate(dept_fac = factor(dept, levels = dept_levels_all)) %>%
   group_by(jin_label) %>%
-  # Other を必ず最初に並べて → 上から積み上げの一番上になる
   arrange(dept == "Other", desc(pct), .by_group = TRUE) %>%
   mutate(
     cum_above = cumsum(pct),
-    ymax = 100 - lag(cum_above, default = 0),  # 上から積み上げ開始位置
+    ymax = 100 - dplyr::lag(cum_above, default = 0),
     ymin = ymax - pct
   ) %>%
   ungroup() %>%
@@ -321,10 +314,10 @@ df_rect_top <- df_plot2 %>%
     xmin   = grp_id - width,
     xmax   = grp_id + width,
     x      = grp_id,
-    ymid   = (ymin + ymax) / 2,
-    dept_fac = factor(dept, levels = legend_lvls)
+    ymid   = (ymin + ymax) / 2
   )
 
+# --- 5) 作図（凡例は出現科のみ・drop=FALSEで固定表示） ---
 ggplot(df_rect_top) +
   geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = dept_fac)) +
   geom_text(aes(x = x, y = ymid, label = ifelse(pct >= 5, sprintf("%.1f", pct), "")),
@@ -336,11 +329,11 @@ ggplot(df_rect_top) +
   scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
   scale_fill_manual(
     values = local_palette,
-    breaks = legend_lvls,
+    limits = dept_levels_all,
+    drop   = FALSE,
     name   = "Clinical Department"
   ) +
   labs(x = NULL, y = "Ratio (%)",
-       title = "Department composition by group (top stacking, Other always on top)") +
+       title = "Department composition by group (Top 5 + Other, stacked from top)") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
-
