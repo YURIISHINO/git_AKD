@@ -18,13 +18,18 @@ cre_2013 <- read_csv("jin/cre_over18/cre_2013_over18.csv",
                      locale = loc, skip = 3,
                      col_types = cols(.default = "c")) %>%
   select(患者ID, 科ｺｰﾄﾞ, 検査日)
+cre_2014 <- read_csv("jin/cre_over18/cre_2014_over18.csv",
+                     locale = loc, skip = 3,
+                     col_types = cols(.default = "c")) %>%
+  select(患者ID, 科ｺｰﾄﾞ, 検査日)
+
 # 行結合
-cre_2012_2013 <- bind_rows(cre_2012, cre_2013)
+cre_2012_2014 <- bind_rows(cre_2012, cre_2013, cre_2014)
 # 検査日を日付型に変換（必要に応じて）
-cre_2012_2013 <- cre_2012_2013 %>%
+cre_2012_2014 <- cre_2012_2014 %>%
   mutate(検査日 = as.Date(as.character(検査日), format = "%Y%m%d"))
 
-cre_2012_2013_sub <- cre_2012_2013 %>%
+cre_2012_2014_sub <- cre_2012_2014 %>%
   transmute(
     id   = as.numeric(患者ID),
     code = 科ｺｰﾄﾞ,
@@ -35,13 +40,13 @@ cre_2012_2013_sub <- cre_2012_2013 %>%
     code = paste(unique(code), collapse = "&"),  # A&B形式にまとめる
     .groups = "drop"
   )
-cre_2012_2013_sub
+cre_2012_2014_sub
 library(readr)
 setwd("E:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 #判定期間にデータがないものを除外#####
 jin1_Eligibile_include_code <- jin1_Eligibile %>%
-  left_join(cre_2012_2013_sub, by = c("id", "date")) %>%
+  left_join(cre_2012_2014_sub, by = c("id", "date")) %>%
   filter(exclude == "include") %>%
   mutate(
     jin_label = case_when(
@@ -59,7 +64,7 @@ library(dplyr)
 jin1_Eligibile_include_code %>%
   group_by(jin_label) %>%
   summarise(unique_ids = n_distinct(id), .groups = "drop")
-
+colnames(jin1_Eligibile_include_code)
 
 #####出現回数をみる####
 main_code_df_n <- jin1_Eligibile_include_code %>%
@@ -240,6 +245,7 @@ View(main_code_ratio_en)
 # Excelファイルに書き出す
 library(writexl)
 write_xlsx(main_code_ratio_en, path = "main_code_ratio.xlsx")
+
 #積み上げ縦棒####
 library(dplyr)
 library(ggplot2)
@@ -336,4 +342,225 @@ ggplot(df_rect_top) +
   labs(x = NULL, y = "Ratio (%)",
        title = "Department composition by group (Top 5 + Other, stacked from top)") +
   theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+#産婦人科、泌尿器科にあたるidを抜き出し#####
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(readr)
+
+# --- id×科（英語名）へ展開 ---
+id_dept_en <- jin1_Eligibile_include_code %>%
+  distinct(id, jin_label, main_code) %>%
+  filter(!is.na(main_code)) %>%
+  mutate(code_part = str_split(main_code, " & ")) %>%  # "A & B" → c("A","B")
+  unnest(code_part) %>%
+  left_join(department_lookup_en, by = c("code_part" = "main_code")) %>%
+  rename(dept_en = clinical_department_en)
+View(jin1_Eligibile_include_code)
+
+# --- ① No-data かつ Obstetrics and Gynecology のID一覧 ---
+no_data_obgyn_ids <- id_dept_en %>%
+  filter(jin_label == "No-data", dept_en == "Obstetrics and Gynecology") %>%
+  distinct(id) %>%
+  arrange(id)
+
+# --- ② Non-Recovery かつ Urology のID一覧 ---
+nonrec_urology_ids <- id_dept_en %>%
+  filter(jin_label == "Non-Recovery", dept_en == "Urology") %>%
+  distinct(id) %>%
+  arrange(id)
+
+# 確認出力
+cat("# No-data × Obstetrics and Gynecology: ", nrow(no_data_obgyn_ids), "人\n", sep = "")
+print(no_data_obgyn_ids, n = Inf)
+
+cat("\n# Non-Recovery × Urology: ", nrow(nonrec_urology_ids), "人\n", sep = "")
+print(nonrec_urology_ids, n = Inf)
+
+# 必要ならCSVに保存
+write_csv(no_data_obgyn_ids, "idlist_NoData_ObstetricsGynecology.csv")
+write_csv(nonrec_urology_ids, "idlist_NonRecovery_Urology.csv")
+
+
+library(dplyr)
+
+ids_no_data_MM <- jin1_Eligibile_include_code %>%
+  filter(jin_label == "No-data", main_code == "MM") %>%
+  distinct(id) %>%
+  arrange(id)
+
+# 結果を確認
+print(ids_no_data_MM, n = Inf)
+
+# 必要ならCSVに保存
+# write.csv(ids_no_data_MM, "ids_NoData_MM.csv", row.names = FALSE)
+
+#AKI/AKD日の日にち#####
+library(readr)
+library(dplyr)
+library(tibble)
+library(lubridate)
+jin1_AKI_date_nonNA_unique <- read_csv("E:/R/jin1_AKI_date_nonNA_unique.csv")
+jin1_AKD_date_nonNA_unique <- read_csv("E:/R/jin1_AKD_date_nonNA_unique.csv")
+jin1_Eligibile_AKD_code <- jin1_Eligibile %>%
+  # 既存のコード（cre_2012_2013_sub を id, date で突合）
+  left_join(cre_2012_2014_sub, by = c("id", "date")) %>%
+  # ★ AKI / AKD の発生日を id で突合（必要列だけに絞るのが安全）
+  #left_join(select(jin1_AKI_date_nonNA_unique, id, AKI_date), by = "id") %>%
+  #left_join(select(jin1_AKD_date_nonNA_unique, id, AKD_date), by = "id") %>%
+  # ★ 型合わせ（文字なら Date に変換）
+  mutate(
+    AKI_date = as.Date(AKI_date),
+    AKD_date = as.Date(AKD_date)
+    # もし 20130715 のような数値/文字なら lubridate::ymd(AKI_date) 等に変更
+  ) %>%
+  # ★ event_date を最小（より早い日付）で作成（片方NAも考慮）
+  mutate(
+    event_date = if_else(
+      !is.na(AKI_date) & !is.na(AKD_date),
+      pmin(AKI_date, AKD_date),
+      coalesce(AKI_date, AKD_date)
+    )
+  ) %>%
+  # 以降は元のラベル付け
+  filter(exclude == "include") %>%
+  mutate(
+    jin_label = case_when(
+      jin_status == "nonAKD" ~ "nonAKD",
+      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ "No-data",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(jin_label = factor(jin_label, levels = c("nonAKD", "Non-Recovery", "Recovery", "No-data")))
+
+jin1_Eligibile_AKD_code_unique <- jin1_Eligibile_AKD_code %>%
+  filter(jin_label != "nonAKD") %>%
+  distinct(id, date, jin_label, event_date, code)
+jin1_Eligibile_AKD_code_event_only <- jin1_Eligibile_AKD_code_unique %>%
+  filter(date == event_date)
+# 1) 突合して科名を付与
+jin1_Eligibile_AKD_code_event_only <- jin1_Eligibile_AKD_code_event_only %>%
+  left_join(department_lookup_jp,  by = c("code" = "main_code")) %>%
+  left_join(department_lookup_en,  by = c("code" = "main_code"))
+# 2) jin_statusごとにcodeを集計
+code_summary <- jin1_Eligibile_AKD_code_event_only %>%
+  count(jin_label, code, clinical_department, clinical_department_en, name = "n") %>%
+  arrange(jin_label, desc(n))
+code_summary_top10 <- code_summary %>%
+  group_by(jin_label) %>%
+  slice_max(order_by = n, n = 10) %>%
+  ungroup()
+print(code_summary_top10, n=Inf)
+
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+# --- 1) Top 5 + Other に分類 ---
+df_plot_top5_other <- code_summary %>%
+  group_by(jin_label) %>%
+  mutate(rank = dense_rank(desc(n))) %>%
+  mutate(
+    dept = if_else(
+      rank <= 5,
+      dplyr::coalesce(clinical_department_en, "Unknown"),
+      "Other"
+    )
+  ) %>%
+  ungroup() %>%                                  # ★ ここで解除
+  summarise(n = sum(n), .by = c(jin_label, dept)) %>%  # ★ .by は非グループ化で
+  group_by(jin_label) %>%
+  mutate(pct = 100 * n / sum(n)) %>%
+  ungroup()
+
+# --- 2) 凡例レベル（Otherは最後） ---
+dept_levels_all <- df_plot_top5_other %>% distinct(dept) %>% pull(dept)
+dept_levels_all <- c(setdiff(dept_levels_all, "Other"), "Other")
+
+# --- 3) パレット（Otherはグレー固定） ---
+base_palette <- c(
+  "Digestive Surgery"         = "#1B9E77",
+  "Endocrinology"             = "#E41A1C",
+  "Hematology"                = "#377EB8",
+  "Obstetrics and Gynecology" = "#E78AC3",
+  "Urology"                   = "#FFA07A",
+  "Cardiology"                = "#984EA3",
+  "Cardiovascular Surgery"    = "#66C2A5",
+  "Emergency Medicine"        = "#FF7F00",
+  "Otorhinolaryngology"       = "#FFD700",
+  "Neurosurgery"              = "#8DA0CB",
+  "Gastroenterology"          = "#A6D854",
+  "Respiratory Medicine"      = "#BC80BD",
+  "Nephrology"                = "#80B1D3",
+  "Orthopedics"               = "#FDB462",
+  "Vascular Surgery"          = "#FB9A99",
+  "Immunology"                = "#B3DE69",
+  "Other"                     = "#BEBEBE"
+)
+
+missing_keys <- setdiff(dept_levels_all, names(base_palette))
+missing_keys <- setdiff(missing_keys, "Other")
+n_missing <- length(missing_keys)
+auto_cols <- if (n_missing > 0) {
+  grDevices::hcl(
+    h = seq(15, 375, length.out = n_missing + 1)[1:n_missing],
+    c = 60, l = 65
+  )
+} else character(0)
+names(auto_cols) <- missing_keys
+
+local_palette <- c(base_palette, auto_cols)
+local_palette["Other"] <- "#BEBEBE"
+local_palette <- local_palette[dept_levels_all]
+
+# --- 4) 上から積み上げ（Otherを最上段） ---
+df_rect_top <- df_plot_top5_other %>%
+  mutate(dept_fac = factor(dept, levels = dept_levels_all)) %>%
+  group_by(jin_label) %>%
+  arrange(dept == "Other", desc(pct), .by_group = TRUE) %>%
+  mutate(
+    cum_above = cumsum(pct),
+    ymax = 100 - dplyr::lag(cum_above, default = 0),
+    ymin = ymax - pct
+  ) %>%
+  ungroup() %>%
+  mutate(
+    grp_id = as.integer(forcats::fct_inorder(jin_label)),
+    width  = 0.45,
+    xmin   = grp_id - width,
+    xmax   = grp_id + width,
+    x      = grp_id,
+    ymid   = (ymin + ymax) / 2,
+    label_pct = ifelse(pct >= 5, sprintf("%.1f%%", pct), "")
+  )
+
+# --- 5) 作図 ---
+x_lut <- df_rect_top %>% distinct(grp_id = x, jin_label) %>% arrange(grp_id)
+
+ggplot(df_rect_top) +
+  geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = dept_fac)) +
+  geom_text(aes(x = x, y = ymid, label = label_pct), size = 3, color = "black") +
+  scale_x_continuous(
+    breaks = x_lut$grp_id,
+    labels = as.character(x_lut$jin_label)
+  ) +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
+  scale_fill_manual(
+    values = local_palette,
+    limits = dept_levels_all,
+    drop   = FALSE,
+    name   = "Clinical Department"
+  ) +
+  labs(
+    x = NULL, y = "Ratio within group (%)",
+    title = "Top-5 departments by group (AKI/AKD event_date)"
+  ) +
+  theme_minimal(base_size = 12) +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
