@@ -434,54 +434,121 @@ ggsurvplot(fit_composite, data = jin1_Eligibile_composite,
            ylab = "event")
 
 #coxphに必要なcodeのみ####
-#jin1_Eligibileから一意のidだけ抽出
+# 必要パッケージ
+library(dplyr)
+library(survival)
+library(broom)
+library(ggplot2)
+# （Recovery vs Non-Recoveryの直接比較を出すなら）
+# library(multcomp)
+
+# -------------------------------
+# 1) 解析用データ（3群）の作成
+# -------------------------------
+# 1人1行（index_date当日レコードのみ・最初のindex_dateを採用）
 jin1_Eligibile_unique_id <- jin1_Eligibile %>%
   group_by(id) %>%
-  arrange(index_date) %>%
+  arrange(index_date, date, .by_group = TRUE) %>%
   slice(1) %>%
   ungroup()
-jin1_Eligibile_cox <- jin1_Eligibile_unique_id %>%
-  # 対象群のみ
+
+jin1_Eligibile_cox_3group <- jin1_Eligibile_unique_id %>%
+  # nonAKD と AKDのみ（あなたの方針に合わせて必要ならここは保持）
   filter(jin_status %in% c("nonAKD", "AKD")) %>%
-  # 同日行に限定（index_date当日のレコード）
+  # index_date当日の行だけ（同日複数行の可能性に備えてdistinct）
   filter(date == index_date) %>%
-  # 1人1行
   distinct(id, .keep_all = TRUE) %>%
-  # 併用フラグと解析用変数
+  # 3群ラベル
   mutate(
+    jin_label = case_when(
+      jin_status == "nonAKD" ~ "nonAKD",
+      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+      TRUE ~ NA_character_
+    ),
+    jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
+    # 併用フラグ
     arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-    group        = factor(jin_status, levels = c("nonAKD", "AKD")),
+    # 追跡時間（年）：index_date+210日以降に統一
     time_years   = as.numeric(last_follow_death - index_plus_210) / 365.25
   ) %>%
-  # 追跡開始（index_date+210）以降のみ
-  filter(!is.na(time_years) & time_years >= 0)
+  # 追跡開始以降のみ
+  filter(!is.na(jin_label), !is.na(time_years), time_years >= 0)
 
-
-library(survival)
-cox_model <- coxph(
-  Surv(time_years, primary_death) ~ jin_status + age + index_cre + arb_acei_use + 
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15+ CKD_status,
-  data = jin1_Eligibile_cox
+# -------------------------------
+# 2) Cox比例ハザード（3群）
+# -------------------------------
+cox_model_3group <- coxph(
+  Surv(time_years, primary_death) ~
+    jin_label + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
+    CKD_status,
+  data = jin1_Eligibile_cox_3group
 )
+
+# （任意）PH仮定チェック
+# print(cox.zph(cox_model_3group))
+
+library(dplyr)
+
+# 件数だけ集計
+ckd_count <- jin1_Eligibile %>%
+  count(CKD_status, name = "n")
+
+ckd_count
+
+
+# --- 3群Cox : tidy + formula順でのフォレスト -------------------------------
 library(broom)
-tidy_model <- tidy(cox_model, exponentiate = TRUE, conf.int = TRUE) %>%
+library(dplyr)
+library(ggplot2)
+
+tidy3 <- broom::tidy(cox_model_3group, exponentiate = TRUE, conf.int = TRUE) %>%
   mutate(
-    term = recode(term,
-                  "jin_status" = "AKD (vs nonAKD)",
-                  "age" = "Age",
-                  "index_cre" = "Index Creatinine",
-                  "arb_acei_use" = "ARB or ACEi Use",
-                  # 以下、任意で疾患名ラベル
-                  "dn1" = "CHF", "dn3" = "Rheumatologic", "dn4" = "Malignancy",
-                  "dn5" = "Liver Disease", "dn6" = "Peptic Ulcer", "dn7" = "MI",
-                  "dn8" = "Renal Disease", "dn9" = "Metastatic Cancer", "dn10" = "Diabetes",
-                  "dn12" = "Stroke", "dn13" = "Hemiplegia", "dn14" = "PVD", "dn15" = "COPD"
+    term_raw  = term,  # tidy()が吐く元の係数名を保持
+    # 読みやすい表示名に置き換え（必要に応じて追加/調整OK）
+    term_nice = dplyr::recode(term,
+                              "jin_labelRecovery"       = "AKD Recovery vs nonAKD",
+                              "jin_labelNon-Recovery"   = "AKD Non-Recovery vs nonAKD",
+                              "age"                     = "Age",
+                              "index_cre"               = "Index Creatinine",
+                              "arb_acei_use"            = "ARB or ACEi Use",
+                              "dn1"  = "CHF",           "dn3"  = "Rheumatologic", "dn4"  = "Malignancy",
+                              "dn5"  = "Liver Disease", "dn6"  = "Peptic Ulcer",  "dn7"  = "MI",
+                              "dn8"  = "Renal Disease", "dn9"  = "Metastatic Cancer",
+                              "dn10" = "Diabetes",      "dn12" = "Stroke",        "dn13" = "Hemiplegia",
+                              "dn14" = "PVD",           "dn15" = "COPD",
+                              .default = term  # 上で指定していないものは元のまま（例: CKD_statusの水準など）
     )
   )
 
+# 1) モデル式の項ラベルを取得（式に書いた順）
+form_order <- attr(stats::terms(cox_model_3group), "term.labels")
+# 2) その順に一致する係数（ダミーや多水準を含む）を展開
+order_raw <- unlist(lapply(form_order, function(x) tidy3$term_raw[startsWith(tidy3$term_raw, x)]))
+order_raw <- order_raw[order_raw %in% tidy3$term_raw]  # 念のため整合チェック
 
-library(ggplot2)
-ggplot(tidy_model, aes(x = estimate, y = reorder(term, estimate))) +
+# 3) 表示名の順ベクトルを作成（上＝式の先頭項にしたいのでREVする）
+display_order <- tidy3 %>%
+  filter(term_raw %in% order_raw) %>%
+  arrange(match(term_raw, order_raw)) %>%
+  pull(term_nice)
+
+tidy3 <- tidy3 %>%
+  mutate(term_nice = factor(term_nice, levels = rev(display_order))) 
+# ↑ グラフのY軸は下→上にレベル順で描かれるのでrev()で
+#    「上から順に：式に書いた順」になります。
+#    下から順にしたい場合はrev()を外してください。
+
+# 必要なら見やすい表（この順のまま）
+tidy3 %>%
+  dplyr::select(term = term_nice, HR = estimate, `CI low` = conf.low, `CI high` = conf.high, p.value) %>%
+  arrange(desc(term)) -> tidy3_table  # arrangeは任意。factorレベルが順序を担保
+
+# フォレストプロット（順序固定）
+ggplot(tidy3, aes(x = estimate, y = term_nice)) +
   geom_point(size = 3) +
   geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
   geom_vline(xintercept = 1, linetype = "dashed", color = "gray50") +
@@ -489,7 +556,7 @@ ggplot(tidy_model, aes(x = estimate, y = reorder(term, estimate))) +
   labs(
     x = "Hazard Ratio (log scale)",
     y = NULL,
-    title = "AKD vs nonAKD: Adjusted Hazard Ratios"
+    title = "Death: Adjusted Hazard Ratios (3-group Cox model)"
   ) +
   theme_minimal(base_size = 14)
 
