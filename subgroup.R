@@ -118,9 +118,10 @@ cox_base <- coxph(
   data = dat
 )
 
-# 交互作用の尤度比検定（推奨）
+# 交互作用の尤度比検定（推奨）　#p＝ 0.6739
 anova(cox_base, cox_int, test = "LRT")
 
+# 交互作用モデルから“層ごとのHR”を計算して表に
 # 交互作用モデルの係数を確認（Waldでも可）
 hr_int_table <- function(fit){
   cf <- coef(fit); vc <- vcov(fit); nm <- names(cf)
