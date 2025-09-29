@@ -44,8 +44,6 @@ longdat <- akd_time_m %>%
     jin_label    = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery"))
   )
 
-colnames(longdat)  # .x/.y が出ないことを確認
-
 # ①ベースモデル（time0_egfrのみ）
 fit_base <- lme(
   egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1,
