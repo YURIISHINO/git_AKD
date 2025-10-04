@@ -76,23 +76,31 @@ akd_combo <- jin1_AKD_intermediate %>%
 akd_combo
 
 #####################################################
-#AKD_cre2がある場合は、AKD_creを返す
-#AKD_egfr3がある場合は、AKD_egfrを返す
-#それ以外で"nonAKD"がある場合は、nonAKDを返す
-#それ以外はnd
+#AKD_cre1 or AKD_cre2 → "AKD_cre"
+#AKD_egfr1 or AKD_egfr3 → "AKD_egfr"
+#AKD_egfr2 → "AKD_egfr_under60"
+
+library(dplyr)
 
 jin1_AKD_with_details <- jin1_AKD_intermediate %>%
   group_by(id) %>%
   mutate(
     final_AKD_status = case_when(
-      any(AKD_status %in% c("AKD_cre2")) ~ "AKD_cre",
-      any(AKD_status %in% c("AKD_egfr3")) ~ "AKD_egfr",
-      "nonAKD" %in% AKD_status ~ "nonAKD",
-      TRUE ~ "nd"
+      any(AKD_status %in% c("AKD_cre1", "AKD_cre2"), na.rm = TRUE) ~ "AKD_cre",             # 最優先
+      any(AKD_status %in% c("AKD_egfr1", "AKD_egfr3"), na.rm = TRUE) ~ "AKD_egfr",           # 次点
+      any(AKD_status == "AKD_egfr2", na.rm = TRUE)                      ~ "AKD_egfr_under60", # 最後
+      all(is.na(AKD_status) | AKD_status == "nd")                       ~ "nd",
+      TRUE                                                              ~ "nonAKD"
     )
   ) %>%
   ungroup()
+
 View(jin1_AKD_with_details)
+
+jin1_AKD_with_details %>%
+  group_by(final_AKD_status) %>%
+  summarise(n_id = n_distinct(id)) %>%
+  arrange(desc(n_id))
 
 jin1_AKD <- jin1_AKD_with_details %>%
   dplyr::select(id, AKD_status = final_AKD_status)
