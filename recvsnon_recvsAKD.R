@@ -8,14 +8,14 @@ library(dplyr)
 jin1_Eligibile %>%
   group_by(jin_status, exclude) %>%
   summarise(n = n(), .groups = "drop")
-
+jin1_Eligibile %>%
+  group_by(AKD_status) %>%
+  summarise(n_id = n_distinct(id)) %>%
+  arrange(desc(n_id))
 
 jin1_Eligibile %>%
   group_by(jin_status) %>%
   summarise(n_unique_ids = n_distinct(id), .groups = "drop")
-jin1_Eligibile %>%
-  filter(jin_status == "other") %>%
-  count(AKD_status, AKI_status, CKD_status)
 
 #eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
 library(nlme)
@@ -360,6 +360,7 @@ ggsave("Fig_Slopes_by_Group_TimeHorizons_facet.tiff", plot = p,
 #アウトカム解析に必要なcodeのみ####
 #jin1_Eligibileから一意のidだけ抽出
 jin1_Eligibile_unique_id <- jin1_Eligibile %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   group_by(id) %>%
   arrange(index_date) %>%
   slice(1) %>%
@@ -372,6 +373,7 @@ library(dplyr)
 
 #死亡についてのカプランマイヤーデータ整形
 jin1_Eligibile_death <- jin1_Eligibile_unique_id %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   mutate(
     jin_label = case_when(
       jin_status == "nonAKD" ~ "nonAKD",
@@ -407,6 +409,7 @@ library(dplyr)
 
 #競合エンドポイントについてのカプランマイヤーデータ整形
 jin1_Eligibile_composite <- jin1_Eligibile_unique_id %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   mutate(
     jin_label = case_when(
       jin_status == "nonAKD" ~ "nonAKD",
@@ -447,16 +450,22 @@ library(ggplot2)
 # -------------------------------
 # 1人1行（index_date当日レコードのみ・最初のindex_dateを採用）
 jin1_Eligibile_unique_id <- jin1_Eligibile %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   group_by(id) %>%
   arrange(index_date, date, .by_group = TRUE) %>%
   slice(1) %>%
   ungroup()
 
+#確認
+jin1_Eligibile_unique_id  %>%
+  group_by(jin_status) %>%
+  summarise(n_unique_ids = n_distinct(id), .groups = "drop")
+
 jin1_Eligibile_cox_3group <- jin1_Eligibile_unique_id %>%
   # nonAKD と AKDのみ（あなたの方針に合わせて必要ならここは保持）
-  filter(jin_status %in% c("nonAKD", "AKD")) %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   # index_date当日の行だけ（同日複数行の可能性に備えてdistinct）
-  filter(date == index_date) %>%
+  #filter(date == index_date) %>%
   distinct(id, .keep_all = TRUE) %>%
   # 3群ラベル
   mutate(
@@ -477,6 +486,12 @@ jin1_Eligibile_cox_3group <- jin1_Eligibile_unique_id %>%
   # 追跡開始以降のみ
   filter(!is.na(jin_label), !is.na(time_years), time_years >= 0)
 
+
+#確認
+jin1_Eligibile_cox_3group  %>%
+  group_by(jin_label) %>%
+  summarise(n_unique_ids = n_distinct(id), .groups = "drop")
+
 # -------------------------------
 # 2) Cox比例ハザード（3群）
 # -------------------------------
@@ -490,16 +505,6 @@ cox_model_3group <- coxph(
 
 # （任意）PH仮定チェック
 # print(cox.zph(cox_model_3group))
-
-library(dplyr)
-
-# 件数だけ集計
-ckd_count <- jin1_Eligibile %>%
-  count(CKD_status, name = "n")
-
-ckd_count
-
-
 # --- 3群Cox : tidy + formula順でのフォレスト -------------------------------
 library(broom)
 library(dplyr)
@@ -565,6 +570,7 @@ ggplot(tidy3, aes(x = estimate, y = term_nice)) +
 #①死亡のカプランマイヤー####
 #データ整形
 jin1_Eligibile_sens <- jin1_Eligibile_unique_id %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
   mutate(
     group = case_when(
       jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ NA_character_,  # 除外対象をNAに
@@ -598,6 +604,7 @@ window_data
 #`150_210recovery` == 0,`90_150recovery` == 0を除外する
 akd_no_recovery_ids <- jin1_Eligibile %>%
   filter(
+    exclude == "include",
     jin_status == "AKD",
     `150_210recovery` == 0,
     `90_150recovery` == 0
@@ -739,11 +746,16 @@ extract_slopes <- function(fit, horizon_label = "") {
 }
 
 ## 3) 全期間＋1/2/3年で一括実行 → 結合
-horizons       <- c(Inf, 1, 2, 3)
-horizon_labels <- c("All period", "within1 year", "within2 years", "within3 years")
+horizons       <- c(1, 2, 3, Inf)
+horizon_labels <- c("within1 year", "within2 years", "within3 years","All period")
 
 fits <- map(horizons, ~ fit_lme_within(dat0, .x))
 slopes_all <- map2_dfr(fits, horizon_labels, ~ extract_slopes(.x, .y))
+
+order_levels <- c("within1 year", "within2 years", "within3 years", "All period")
+slopes_all <- slopes_all %>%
+  mutate(Horizon = factor(Horizon, levels = order_levels))
+
 
 ## 4) （任意）各期間の症例数（ユニーク id）をサブタイトルに表示
 n_by_horizon <- map_int(horizons, function(h) {
