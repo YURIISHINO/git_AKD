@@ -386,7 +386,7 @@ library(lubridate)
 library(stringi)  # 全角→半角
 
 nephrectomy_sub <- nephrectomy %>%
-  select(ID, 手術日, 術式...4) %>%
+  dplyr::select(ID, 手術日, 術式...4) %>%
   filter(術式...4 %in% c("腎摘", "腎摘＋部切", "腎摘出術", "腎摘出術 K772-00")) %>%
   mutate(
     # 日付文字列を正規化（全角→半角、余分な空白除去、非数字→"-"）
@@ -402,7 +402,7 @@ nephrectomy_sub <- nephrectomy %>%
     # ID→数値id
     id = suppressWarnings(as.numeric(ID))
   ) %>%
-  select(id, ope_date, 術式...4)
+ dplyr::select(id, ope_date, 術式...4)
 
 # 変換できなかった行があるか軽くチェック（必要なら）
 sum(is.na(nephrectomy_sub$ope_date))
@@ -422,7 +422,7 @@ id_index <- jin1_Eligibile %>%
   group_by(id) %>%
   slice(1) %>%
   ungroup() %>%
-  select(id, index_date)
+  dplyr::select(id, index_date)
 
 # ② nephrectomy_sub に index_date を突合し、-90～210日以内の手術か判定
 nephrectomy_flag <- nephrectomy_sub %>%
@@ -490,9 +490,9 @@ print(pregnancy_unique, n = 10)
 
 jin1_Eligibile_removed <- jin1_Eligibile %>%
   # nephrectomy_1 の id を除外
-  anti_join(nephrectomy_1 %>% select(id), by = "id") %>%
+  anti_join(nephrectomy_1 %>% dplyr::select(id), by = "id") %>%
   # pregnancy_unique の id も除外
-  anti_join(pregnancy_unique %>% select(id), by = "id")
+  anti_join(pregnancy_unique %>% dplyr::select(id), by = "id")
 
 print(jin1_Eligibile_removed, n = 10)
 
