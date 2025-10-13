@@ -427,7 +427,47 @@ ggsurvplot(fit_death, data = jin1_Eligibile_death,
            xlab = "year",
            ylab = "event")
 
-colnames(jin1_Eligibile)
+#グラフをJPEGに保存（抄録用）
+# ---- 図の作成（曲線のみ、抄録仕様） ----
+km_plot <- ggsurvplot(
+  fit_death,
+  data = jin1_Eligibile_death,
+  fun = "event",
+  pval = TRUE,
+  conf.int = TRUE,
+  conf.int.alpha = 0.20,          # CIを薄く
+  size = 1.1,                     # 線を少し太く
+  risk.table = FALSE,             # 抄録では非表示推奨
+  xlim = c(0, 10),
+  ylim = c(0, 0.4),
+  title = "Cumulative incidence of death by AKD recovery status",
+  xlab = "Years since index date",
+  ylab = "Cumulative incidence",
+  legend.title = NULL,
+  legend.labs = c("non-AKD", "AKD Recovery", "AKD Non-Recovery"),
+  palette = c("#E64B35", "#00A087", "#4DBBD5"),
+  ggtheme = theme_minimal(base_size = 12)
+)
+
+# ---- ここがポイント：km_plot$plot に theme を足す ----
+km_plot$plot <- km_plot$plot +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 12),
+    axis.text  = element_text(size = 10)
+  )
+
+# （任意）p値の位置を微調整したい場合
+# km_plot$plot <- km_plot$plot + annotate("text", x = 0.5, y = 0.36, label = km_plot$pval, hjust = 0)
+
+# ---- JPEGで保存（640×480px, ≤1.5MB）----
+jpeg("death_curve_for_abstract.jpeg", width = 640, height = 480, units = "px", quality = 95)
+print(km_plot$plot)
+dev.off()
+
+
+
 #競合エンドポイントについてのカプランマイヤー 2025/8/5 ####
 install.packages("survminer")
 library(survival)
@@ -464,7 +504,7 @@ ggsurvplot(fit_composite, data = jin1_Eligibile_composite,
            ylab = "event")
 
 #coxphに必要なcodeのみ####
-# 必要パッケージ
+{# 必要パッケージ
 library(dplyr)
 library(survival)
 library(broom)
@@ -616,8 +656,7 @@ ggplot(tidy3, aes(x = estimate, y = term_nice)) +
     title = "Death: Adjusted Hazard Ratios (3-group Cox model)"
   ) +
   theme_minimal(base_size = 14)
-
-
+}
 #上記解析・描出を感度分析を行うのに必要なcodeのみ####
 #①死亡のカプランマイヤー####
 #データ整形
