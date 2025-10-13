@@ -35,7 +35,7 @@ covars <- c("age","sex","arb_acei_use",
             "dn1","dn3","dn4","dn5","dn6","dn7","dn8","dn9","dn10","dn12","dn13","dn14","dn15")
 
 longdat <- akd_time_m %>%
-  filter(years_from_time0 <= 1) %>%
+#  filter(years_from_time0 <= 1) %>%         #１年以内に言及してしまうと、混合効果モデルでの２年以内や３年以内がワークしないのでは？
   dplyr::select(-any_of(covars)) %>%         # ★ 重複候補を削除
   left_join(baseline_cov, by = "id") %>%
   mutate(
