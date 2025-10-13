@@ -304,7 +304,7 @@ ggplot(df_plot, aes(x = group, y = estimate, fill = group)) +
     legend.position = "bottom"
   )
 
-#######
+#95％信頼区間など######
 slope_contrast_by_group <- function(fit, model_label, window_label, level = 0.95){
   cf <- names(fixef(fit))
   v <- function(g){
@@ -368,3 +368,55 @@ df_contrast_out <- df_contrast %>%
 
 df_contrast_out
 print(df_contrast_out, n=Inf)
+
+#抄録用グラフ＋保存####
+library(dplyr)
+library(ggplot2)
+
+# --- 1) サブセット（≤1 year × 2モデル） ---
+df_1y <- df_plot %>%
+  filter(window == "≤1 year",
+         model %in% c("① Base", "③ Slope-adjusted")) %>%
+  mutate(
+    group  = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery")),
+    model  = recode(model,
+                    "① Base" = "Unadjusted",
+                    "③ Slope-adjusted" = "Slope-adjusted")
+  )
+
+# --- 2) 図作成 ---
+p <- ggplot(df_1y, aes(x = group, y = estimate, fill = group)) +
+  geom_col(width = 0.65) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, linewidth = 0.6) +
+  facet_wrap(~ model, nrow = 1) +
+  labs(
+    title = "Comparison of one-year eGFR slopes\nby among recovery groups",
+    x = NULL,
+    y = expression(paste("Slope (mL/min/1.73 m"^2," per year), 95% CI")),
+    fill = "Group"
+  ) +
+  scale_fill_manual(values = c(
+    nonAKD = "#E41A1C",
+    Recovery = "#4DAF4A",
+    `Non-Recovery` = "#377EB8"
+  )) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey95", colour = NA),
+    strip.text = element_text(size = 10.5, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_blank(),       # ★ X軸ラベルを非表示
+    axis.ticks.x = element_blank(),      # ★ 目盛り線も非表示
+    axis.title.y = element_text(margin = margin(r = 10)),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 15),
+    plot.title = element_text(size = 13, face = "bold", hjust = 0.5, lineheight = 1.1)
+  )
+
+# --- 3) 抄録用に保存（JPEG 640×480 px） ---
+ggsave(
+  filename = "egfr_slope_1y_two_models_no_xlabels.jpeg",
+  plot = p,
+  width = 640, height = 480, units = "px",
+  dpi = 150, device = "jpeg", quality = 95
+)
