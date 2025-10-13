@@ -1,21 +1,48 @@
 #必要な情報をすべて含有するcsvファイル(jin1_Eligible? primay_ESKDやdeath情報や感度分析に必要な情報などすべて含有)を作成し、適当なdfを作成
-View(jin1_Eligibile)
 library(readr)
+library(dplyr)
 setwd("E:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-colnames(jin1_Eligibile)
-library(dplyr)
+
+#集計#####
 jin1_Eligibile %>%
   group_by(jin_status, exclude) %>%
   summarise(n = n(), .groups = "drop")
 jin1_Eligibile %>%
+  filter(exclude == "include") %>%
   group_by(AKD_status) %>%
   summarise(n_id = n_distinct(id)) %>%
   arrange(desc(n_id))
 
 jin1_Eligibile %>%
+  filter(exclude == "include") %>%
   group_by(jin_status) %>%
   summarise(n_unique_ids = n_distinct(id), .groups = "drop")
+
+#観察期間計算####
+library(dplyr)
+# 観察期間（日数 → 月数へ変換）
+follow_summary <- jin1_Eligibile %>%
+  mutate(
+    follow_days = as.numeric(last_follow_composite - index_date),
+    follow_months = follow_days / 30.44  # 日→月換算（平均1か月=30.44日）
+  ) %>%
+  summarise(
+    median_follow = median(follow_months, na.rm = TRUE),
+    q1 = quantile(follow_months, 0.25, na.rm = TRUE),
+    q3 = quantile(follow_months, 0.75, na.rm = TRUE)
+  )
+
+# 出力文の作成
+result_text <- with(follow_summary,
+                    paste0(
+                      "観察期間中央値は", round(median_follow, 1),
+                      "ヶ月（四分位範囲：", round(q1, 1), "–", round(q3, 1), "ヶ月）"
+                    )
+)
+
+# 結果を表示
+cat(result_text, "\n")
 
 #eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
 library(nlme)
@@ -158,7 +185,7 @@ create_time_window_data <- function(data, targets, window) {
 window_data <- create_time_window_data(akd_time_m, target_timepoints, window_width)
 
 #slope描出に必要なcodeのみ####
-# 線形混合モデル　1年####
+{# 線形混合モデル　1年####
 fit_window_within_1year <- lme(
   egfr ~ years_from_time0 * jin_label + time0_egfr - 1,
   random = list(id = pdSymm(form = ~ 1 + years_from_time0)),
@@ -356,7 +383,7 @@ print(p)
 ggsave("Fig_Slopes_by_Group_TimeHorizons_facet.tiff", plot = p,
        width = 10.5, height = 3.2, units = "in", dpi = 600, compression = "lzw")
 
-
+}
 #アウトカム解析に必要なcodeのみ####
 #jin1_Eligibileから一意のidだけ抽出
 jin1_Eligibile_unique_id <- jin1_Eligibile %>%
@@ -502,6 +529,31 @@ cox_model_3group <- coxph(
     CKD_status,
   data = jin1_Eligibile_cox_3group
 )
+confint(cox_model_3group)
+exp(confint(cox_model_3group))
+
+
+# RecoveryとNon-Recoveryの差を検定→有意差なし#####
+fit <- coxph(Surv(time_years, primary_death) ~ jin_label + age + index_cre + arb_acei_use +
+               dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 +
+               dn12 + dn13 + dn14 + dn15 + CKD_status,
+             data = jin1_Eligibile_cox_3group)
+anova(fit)
+# または contrast 検定
+library(multcomp)
+# Recovery － Non-Recovery = 0（＝差がない）を検定
+g <- glht(fit, linfct = c("`jin_labelRecovery` - `jin_labelNon-Recovery` = 0"))
+summary(g)          # z と p値（線形予測子スケール）
+ci <- confint(g)    # 95%CI（線形予測子スケール）
+
+# HRと95%CIに変換して表示
+est    <- summary(g)$test$coef[1]
+pval   <- summary(g)$test$pvalues[1]
+HR     <- exp(est)
+HR_CI  <- exp(ci$confint[1, c("lwr","upr")])
+c(HR = HR, CI_low = HR_CI[1], CI_high = HR_CI[2], p = pval)
+
+
 
 # （任意）PH仮定チェック
 # print(cox.zph(cox_model_3group))
