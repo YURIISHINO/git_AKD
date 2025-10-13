@@ -2,7 +2,7 @@ library(dplyr)
 library(readr)
 setwd("E:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-jin1_inclusion.csv <- read_csv("jin1_inclusion.csv", locale = locale(encoding = "SHIFT-JIS"))
+jin1_inclusion <- read_csv("jin1_inclusion.csv", locale = locale(encoding = "SHIFT-JIS"))
 akd_time_m <- jin1_inclusion %>%
   mutate(
     years_from_time0 = as.numeric(date - time0) / 365.25  # 年単位に変換
@@ -55,7 +55,7 @@ fit_base <- lme(
                        opt = "optim", optimMethod = "L-BFGS-B")
 )
 
-# ②交絡因子（レベルのみ調整）
+# ②交絡因子（レベルのみ調整）（Coxの交絡因子の主効果を追加）
 fit_level_adj <- update(
   fit_base,
   . ~ . + age_c + sex + arb_acei_use + CKD_status +
@@ -63,7 +63,7 @@ fit_level_adj <- update(
     dn10 + dn12 + dn13 + dn14 + dn15
 )
 
-# ③交絡因子（スロープまで調整）
+# ③交絡因子（スロープまで調整）（years_from_time0との交互作用を追加）
 fit_slope_adj <- update(
   fit_level_adj,
   . ~ . + years_from_time0:(age_c + arb_acei_use + CKD_status +
@@ -303,3 +303,68 @@ ggplot(df_plot, aes(x = group, y = estimate, fill = group)) +
     strip.background = element_rect(fill = "grey95", colour = NA),
     legend.position = "bottom"
   )
+
+#######
+slope_contrast_by_group <- function(fit, model_label, window_label, level = 0.95){
+  cf <- names(fixef(fit))
+  v <- function(g){
+    vec <- rep(0, length(cf)); names(vec) <- cf
+    if("years_from_time0" %in% cf) vec["years_from_time0"] <- 1
+    if(g == "Recovery" && "years_from_time0:jin_labelRecovery" %in% cf)
+      vec["years_from_time0:jin_labelRecovery"] <- 1
+    if(g == "Non-Recovery" && "years_from_time0:jin_labelNon-Recovery" %in% cf)
+      vec["years_from_time0:jin_labelNon-Recovery"] <- 1
+    vec
+  }
+  b  <- v("nonAKD")
+  r  <- v("Recovery")
+  nr <- v("Non-Recovery")
+  
+  K <- rbind(
+    `Recovery − nonAKD`       = r  - b,
+    `Non-Recovery − nonAKD`   = nr - b,
+    `Non-Recovery − Recovery` = nr - r
+  )
+  
+  gl <- glht(fit, linfct = K)
+  ci <- suppressMessages(confint(gl, level = level))
+  sm <- suppressMessages(summary(gl))
+  
+  tibble(
+    contrast = rownames(K),
+    diff     = ci$confint[, "Estimate"],
+    lower    = ci$confint[, "lwr"],
+    upper    = ci$confint[, "upr"],
+    p_value  = sm$test$pvalues,
+    signif   = ifelse(ci$confint[, "lwr"] > 0 | ci$confint[, "upr"] < 0, "Yes", "No"),
+    model    = model_label,
+    window   = window_label
+  )
+}
+library(purrr)
+
+df_contrast <- purrr::imap_dfr(fits, function(models, win){
+  purrr::imap_dfr(models, function(fit, mdl){
+    slope_contrast_by_group(fit, model_label = mdl, window_label = win, level = 0.95)
+  })
+})
+
+# 見やすく整形（丸め、星付けなど）
+df_contrast_out <- df_contrast %>%
+  mutate(
+    diff  = round(diff, 2),
+    lower = round(lower, 2),
+    upper = round(upper, 2),
+    p_value = signif(p_value, 3),
+    ci = paste0("[", lower, ", ", upper, "]"),
+    star = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE ~ ""
+    )
+  ) %>%
+  dplyr::select(window, model, contrast, diff, ci, p_value, star, signif)
+
+df_contrast_out
+print(df_contrast_out, n=Inf)
