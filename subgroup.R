@@ -7,8 +7,8 @@ library(forestploter)
 library(grid)
 
 # CSVファイルをtibbleとして読み込む_藤倉用
-jin1_Eligibile <- read_csv("/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.8.15/jin1_Eligibile.csv")
-
+setwd("E:/R")
+jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 colnames(jin1_Eligibile)
 # 1人1行（index_date当日レコードのみ・最初のindex_dateを採用）
 jin1_Eligibile_unique_sub <- jin1_Eligibile %>%
@@ -88,7 +88,19 @@ tbl_ckd <- bind_rows(
 
 print(tbl_ckd, n = Inf)
 
+
+cox_interaction <- coxph(
+  Surv(time_years, primary_death) ~ 
+    jin_label * CKD_status +
+    age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
+  data = jin1_Eligibile_cox_3group
+)
+
+summary(cox_interaction)
+
 # --- サブグループ・フォレスト ---
+{
 # 並び順を明示（上：CKDあり → 下：CKDなし）
 plot_df <- tbl_ckd %>%
   mutate(
@@ -232,7 +244,7 @@ forest_plot <- forestploter::forest(
 # 適宜行間を調整する
 convertHeight(forest_plot$heights, "mm", valueOnly = TRUE) 
 forest_plot$heights <- rep(unit(8, "mm"), nrow(forest_plot))
-
+}
 
 # 交互作用なしのベースモデル
 cox_base <- coxph(
@@ -250,7 +262,7 @@ cox_int <- coxph(
   data = dat
 )
 
-# 交互作用の尤度比検定（推奨）　#p＝ 0.6739
+# 交互作用の尤度比検定（推奨）
 anova(cox_base, cox_int, test = "LRT")
 
 # --- 最終モデル（cox_base）の結果を整形 ---
@@ -318,6 +330,27 @@ hr_int_table <- function(fit){
 # 実行
 hr_int <- hr_int_table(cox_int)
 print(hr_int)
+
+setwd("E:/R")
+# Supplementary Table 1 を CSV で保存
+write.csv(hr_int,
+          file = "Supplementary_Table1_hr_by_CKD.csv",
+          row.names = FALSE)
+install.packages("openxlsx")
+library(openxlsx)
+# ファイル作成
+write.xlsx(hr_int,
+           file = "Supplementary_Table1_hr_by_CKD.xlsx",
+           rowNames = FALSE)
+library(knitr)
+install.packages("kableExtra")
+library(kableExtra)
+hr_int %>%
+  kable("html",
+        caption = "Supplementary Table 1. Adjusted Hazard Ratios by CKD Status (Interaction Model)") %>%
+  kable_styling(full_width = FALSE)
+
+
 
 ##fit_ckd1のcoxを走らせるとモデル不安定のアラートが出現するので下記対応がお勧めと、geminiの回答
 #報告すべき主要な結果: 交互作用が有意でないため、cox_base（交互作用なしのモデル）の結果を主たる結果として報告します。

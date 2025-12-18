@@ -106,6 +106,20 @@ library(readr)
 setwd("E:/R")
 jin1_AKD_mod <- read_csv("jin1_AKD_mod.csv", locale = locale(encoding = "SHIFT-JIS"))
 
+#集計
+library(dplyr)
+AKD_status_counts <- jin1_AKD_mod %>%
+  group_by(AKD_status) %>%
+  summarise(n_unique_id = n_distinct(id)) %>%
+  arrange(AKD_status)
+AKD_status_counts
+# "AKD_egfr_under60"だけ抜き出し
+library(dplyr)
+id_under60 <- jin1_AKD_mod %>%
+  filter(AKD_status == "AKD_egfr_under60") %>%
+  distinct(id)
+id_under60
+write.csv(id_under60, "E:/R/id_under60.csv", row.names = FALSE)
 
 #statusまとめ####
 library(readr)
@@ -161,7 +175,8 @@ setwd("E:/R")
 jin1_status <- read_csv("jin1_status.csv", locale = locale(encoding = "SHIFT-JIS"))
 #AKDの行だけ抜き出し
 jin1_status_AKD <- jin1_status %>%
-  filter(AKD_status %in% c("AKD_cre", "AKD_egfr","AKD_egfr_under60") | AKI_status == "AKI") %>%
+  filter(AKD_status %in% c("AKD_cre", "AKD_egfr") | AKI_status == "AKI") %>%
+ # filter(AKD_status %in% c("AKD_cre", "AKD_egfr", "AKD_egfr_under60") | AKI_status == "AKI") %>%
   dplyr::select(-AKI_status, -AKD_status, -CKD_status)
 
 # baseline_cre と baseline_egfr を計算して追加
@@ -280,8 +295,9 @@ colnames(jin1_Eligibile)
 jin1_Eligibile <- jin1_Eligibile %>%
   mutate(
     jin_status_tmp = case_when(
-      AKD_status %in% c("AKD_cre", "AKD_egfr","AKD_egfr_under60") | AKI_status == "AKI" ~ "AKD",
-      AKD_status %in% c("nd", "nonAKD") &
+      AKD_status %in% c("AKD_cre", "AKD_egfr") | AKI_status == "AKI" ~ "AKD",
+      #AKD_status %in% c("AKD_cre", "AKD_egfr","AKD_egfr_under60") | AKI_status == "AKI" ~ "AKD",
+      AKD_status %in% c("nd", "nonAKD","AKD_egfr_under60") &
         AKI_status %in% c("nd", "nonAKI") ~ "nonAKD",
       TRUE ~ "other"
     ),
@@ -488,13 +504,59 @@ pregnancy_unique <- pregnancy_1 %>%
   filter(!(duplicated(id) | duplicated(id, fromLast = TRUE)))
 print(pregnancy_unique, n = 10)
 
-jin1_Eligibile_removed <- jin1_Eligibile %>%
-  # nephrectomy_1 の id を除外
-  anti_join(nephrectomy_1 %>% dplyr::select(id), by = "id") %>%
-  # pregnancy_unique の id も除外
-  anti_join(pregnancy_unique %>% dplyr::select(id), by = "id")
+library(dplyr)
 
-print(jin1_Eligibile_removed, n = 10)
+# 1) idごとのフラグを用意（重複idがあっても安全）
+neph_flag <- nephrectomy_1 %>%
+  distinct(id) %>%
+  mutate(nephrectomy_flag = 1L)
+
+preg_flag <- pregnancy_unique %>%
+  distinct(id) %>%
+  mutate(pregnancy_flag = 1L)
+
+# 2) 突合してフラグ付け → excludeを書き換え（includeのみ）
+jin1_Eligibile_removed <- jin1_Eligibile %>%
+  left_join(neph_flag, by = "id") %>%
+  left_join(preg_flag, by = "id") %>%
+  mutate(
+    nephrectomy_flag = coalesce(nephrectomy_flag, 0L),
+    pregnancy_flag   = coalesce(pregnancy_flag,   0L),
+    exclude_before   = exclude,  # 監査用に保存
+    exclude = case_when(
+      # 両方に該当 → nephrectomyを優先
+      exclude_before == "include" & nephrectomy_flag == 1L              ~ "nephrectomy",
+      exclude_before == "include" & nephrectomy_flag == 0L & pregnancy_flag == 1L ~ "pregnancy",
+      TRUE ~ exclude_before
+    )
+  )
+
+# 変更件数のサマリ
+library(tidyr)
+
+summary_changes <- jin1_Eligibile_removed %>%
+  transmute(
+    changed = exclude_before == "include" & exclude %in% c("nephrectomy","pregnancy"),
+    reason  = exclude
+  ) %>%
+  count(changed, reason, name = "n")
+
+print(summary_changes)
+
+# 重複（両フラグ1）の件数確認
+both_flag_n <- jin1_Eligibile_removed %>%
+  filter(nephrectomy_flag == 1L, pregnancy_flag == 1L) %>%
+  nrow()
+both_flag_n
+library(dplyr)
+jin1_Eligibile_removed %>%
+  group_by(jin_status, exclude) %>%
+  summarise(n = n(), .groups = "drop")
+jin1_Eligibile_removed %>%
+  filter(exclude == "include") %>%
+  group_by(jin_status) %>%
+  summarise(n_unique_ids = n_distinct(id), .groups = "drop")
+
 
 ####jin1_EligibileをCSVファイルに書き出し####
 setwd("E:/R")
@@ -513,13 +575,16 @@ jin1_Eligibile %>%
   filter(exclude == "include") %>%
   group_by(jin_status) %>%
   summarise(n_unique_ids = n_distinct(id), .groups = "drop")
+colnames(jin1_Eligibile)
+id_under60 <- read.csv("E:/R/id_under60.csv", fileEncoding = "CP932")
+library(dplyr)
+jin1_Eligibile_under60 <- jin1_Eligibile %>%
+  inner_join(id_under60, by = "id")
+library(dplyr)
+AKD_status_count_id <- jin1_Eligibile_under60 %>%
+  group_by(jin_status) %>%
+  summarise(n_unique_id = n_distinct(id)) %>%
+  arrange(jin_status)
+AKD_status_count_id
 
-#nephrectomy_1が除外されているか確認
-jin1_Eligibile_neph <- jin1_Eligibile %>%
-  semi_join(nephrectomy_1, by = "id")
-print(jin1_Eligibile_neph, n = 10)
 
-#pregnancy_uniqueが除外されているか確認
-jin1_Eligibile_preg <- jin1_Eligibile %>%
-  semi_join(pregnancy_unique, by = "id")
-print(jin1_Eligibile_preg, n = 10)
