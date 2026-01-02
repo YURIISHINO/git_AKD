@@ -224,6 +224,22 @@ label_totals <- tibble(
   total_patients = c(14406, 100, 114, 127)
 )
 
+# ---- 推奨: 患者数の自動計算版（再現性・透明性向上のため） ----
+# 注意: 上記のハードコーディングされた値は、データ更新時に齟齬が生じるリスクがあります。
+#       以下のコードで実データから自動計算することを推奨します。
+#       理由: (1) 再現性: データ更新時も自動的に正しい数値が計算される
+#             (2) 透明性: 患者数の根拠が明確(実データから計算)
+#             (3) エラー防止: 手入力による数値ミスを防ぐ
+#             (4) 監査対応: 論文査読時に数値の根拠を明示できる
+#
+# label_totals <- jin1_Eligibile_include_code %>%
+#   distinct(id, jin_label) %>%          # 1人1行に集約
+#   count(jin_label, name = "total_patients") %>%
+#   arrange(desc(total_patients))
+# print("Calculated patient counts by jin_label:")
+# print(label_totals)
+# ---- 推奨コード終わり ----
+
 # 構成比を計算
 main_code_ratio <- main_code_by_label_top10_named_full %>%
   left_join(label_totals, by = "jin_label") %>%
