@@ -307,7 +307,8 @@ hr_int_table <- function(fit){
       v   <- vc[b,b] + vc[int,int] + 2*vc[b,int]
     }
     se <- sqrt(v); HR <- exp(est); lo <- exp(est - 1.96*se); hi <- exp(est + 1.96*se)
-    c(HR = HR, CI_low = lo, CI_high = hi)
+    z <- est / se; p_value <- 2 * pnorm(-abs(z))  # Wald検定によるP値
+    c(HR = HR, CI_low = lo, CI_high = hi, P_value = p_value)
   }
   
   # 組み立て
@@ -323,7 +324,8 @@ hr_int_table <- function(fit){
     Comparison = out[,2],
     HR         = as.numeric(out[,3]),
     CI_low     = as.numeric(out[,4]),
-    CI_high    = as.numeric(out[,5])
+    CI_high    = as.numeric(out[,5]),
+    P_value    = as.numeric(out[,6])
   )
 }
 
@@ -361,3 +363,268 @@ hr_int %>%
 #サブグループ別解析（fit_ckd1）の扱い: fit_ckd1で出た警告は、データを分割したことでモデルが不安定になった明確な証拠です。
 #したがって、このサブグループ別解析の結果（特にfit_ckd1）は信頼性が低く、主要な結果として採用すべきではありません。
 #交互作用モデルのアプローチが、この不安定性を回避するためのより優れた方法であったことが示された、と解釈できます。
+
+# ========================================
+# Overall + CKD Subgroup Forest Plot
+# ========================================1
+
+# Step 1: Overall解析用のCoxモデル（recvsnon_recvsAKD.Rのモデルを再現）
+library(readr)
+jin1_Eligibile <- read_csv("/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
+
+# Overall用データ作成（recvsnon_recvsAKD.Rと同じロジック）
+jin1_Eligibile_cox_overall <- jin1_Eligibile %>%
+  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+  distinct(id, .keep_all = TRUE) %>%
+  mutate(
+    jin_label = case_when(
+      jin_status == "nonAKD" ~ "nonAKD",
+      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+      TRUE ~ NA_character_
+    ),
+    jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
+    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
+    time_years = as.numeric(last_follow_death - index_plus_210) / 365.25,
+    CKD_status = case_when(
+      as.character(CKD_status) %in% c("CKD","1") ~ "CKD",
+      as.character(CKD_status) %in% c("nonCKD","0") ~ "nonCKD",
+      TRUE ~ as.character(CKD_status)
+    ),
+    CKD_status = factor(CKD_status, levels = c("nonCKD","CKD"))
+  ) %>%
+  filter(!is.na(jin_label), !is.na(time_years), time_years >= 0, !is.na(CKD_status))
+
+# Overallモデル（recvsnon_recvsAKD.Rのcox_model_3groupと同じ仕様）
+cox_overall <- coxph(
+  Surv(time_years, primary_death) ~
+    jin_label + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
+    CKD_status,
+  data = jin1_Eligibile_cox_overall
+)
+
+# Step 2: 患者数・死亡数集計関数
+calculate_summary_stats <- function(data, group_var = NULL) {
+  if (is.null(group_var)) {
+    # Overall
+    data %>%
+      group_by(jin_label) %>%
+      summarise(
+        Number = n(),
+        Deaths = sum(primary_death),
+        Death_pct = sprintf("%.1f", 100 * Deaths / Number),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        Subgroup = "Overall",
+        Group = as.character(jin_label)
+      ) %>%
+      select(Subgroup, Group, Number, Deaths, Death_pct)
+  } else {
+    # Subgroup
+    data %>%
+      group_by(!!sym(group_var), jin_label) %>%
+      summarise(
+        Number = n(),
+        Deaths = sum(primary_death),
+        Death_pct = sprintf("%.1f", 100 * Deaths / Number),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        Subgroup = paste("CKD", if_else(!!sym(group_var) == 0, "no", "yes")),
+        Group = as.character(jin_label)
+      ) %>%
+      select(Subgroup, Group, Number, Deaths, Death_pct)
+  }
+}
+
+# 集計実行
+stats_overall <- calculate_summary_stats(jin1_Eligibile_cox_overall)
+stats_ckd <- calculate_summary_stats(dat, "ckd_bin")
+
+# Step 3: HR・CI・P値抽出関数
+extract_hr_ci_p <- function(fit, ref_level = "nonAKD") {
+  tidy_res <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
+
+  # jin_label関連の係数のみ抽出
+  hr_data <- tidy_res %>%
+    filter(grepl("^jin_label", term)) %>%
+    mutate(
+      Group = case_when(
+        term == "jin_labelRecovery" ~ "Recovery",
+        term == "jin_labelNon-Recovery" ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      ),
+      HR = estimate,
+      CI_low = conf.low,
+      CI_high = conf.high,
+      P_value = p.value
+    ) %>%
+    select(Group, HR, CI_low, CI_high, P_value)
+
+  # nonAKDのReference行を追加
+  bind_rows(
+    tibble(Group = ref_level, HR = 1, CI_low = 1, CI_high = 1, P_value = NA_real_),
+    hr_data
+  )
+}
+
+# Overall HR抽出
+hr_overall <- extract_hr_ci_p(cox_overall) %>%
+  mutate(Subgroup = "Overall")
+
+# CKD Subgroup HR抽出（既存のhr_int_tableの結果を使用、P値も含む）
+hr_ckd <- hr_int %>%
+  mutate(
+    Subgroup = case_when(
+      Subgroup == "CKD: no" ~ "CKD no",
+      Subgroup == "CKD: yes" ~ "CKD yes",
+      TRUE ~ Subgroup
+    ),
+    Group = case_when(
+      Comparison == "Recovery vs nonAKD" ~ "Recovery",
+      Comparison == "Non-Recovery vs nonAKD" ~ "Non-Recovery",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(Subgroup, Group, HR, CI_low, CI_high, P_value) %>%
+  # nonAKD Reference行を各サブグループに追加
+  bind_rows(
+    tibble(Subgroup = "CKD no", Group = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, P_value = NA_real_),
+    filter(., Subgroup == "CKD no"),
+    tibble(Subgroup = "CKD yes", Group = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, P_value = NA_real_),
+    filter(., Subgroup == "CKD yes")
+  ) %>%
+  distinct()
+
+# Step 4: 統合データフレーム作成
+# 統計量とHRを結合
+forest_data_full <- bind_rows(
+  stats_overall %>% left_join(hr_overall, by = c("Subgroup", "Group")),
+  stats_ckd %>% left_join(hr_ckd, by = c("Subgroup", "Group"))
+) %>%
+  mutate(
+    # Subgroupの順序を固定
+    Subgroup = factor(Subgroup, levels = c("Overall", "CKD no", "CKD yes")),
+    Group = factor(Group, levels = c("nonAKD", "Recovery", "Non-Recovery"))
+  ) %>%
+  arrange(Subgroup, Group) %>%
+  mutate(
+    # 第1列目の表示形式変更（Overall/CKD/no/yes のインデント付き）
+    `Subgroup` = case_when(
+      Subgroup == "Overall" & Group == "nonAKD" ~ "Overall",
+      Subgroup == "CKD no" & Group == "nonAKD" ~ "CKD",
+      Subgroup == "CKD no" & Group == "Recovery" ~ "  no",
+      Subgroup == "CKD yes" & Group == "nonAKD" ~ "CKD",
+      Subgroup == "CKD yes" & Group == "Recovery" ~ "  yes",
+      TRUE ~ ""
+    ),
+
+    # 患者数と死亡数の列（右揃え用にスペース追加は後で）
+    `Number` = as.character(Number),
+    `No. of death (%)` = paste0(Deaths, " (", Death_pct, ")"),
+
+    # HR (95%CI)の列
+    `HR (95%CI)` = if_else(
+      Group == "nonAKD",
+      "Reference",
+      sprintf("%.2f (%.2f–%.2f)", HR, CI_low, CI_high)
+    ),
+
+    # P値の列（有意水準で表記）
+    `P-value` = case_when(
+      Group == "nonAKD" ~ "",
+      is.na(P_value) ~ "",
+      P_value < 0.001 ~ "<0.001",
+      P_value < 0.01 ~ sprintf("%.3f", P_value),
+      TRUE ~ sprintf("%.2f", P_value)
+    )
+  ) %>%
+  select(Subgroup, Group, Number, `No. of death (%)`, `HR (95%CI)`, `P-value`, HR, CI_low, CI_high)
+
+# フォレストプロット用の空白列追加（Forest Plotの位置）
+forest_data_full$` ` <- paste(rep(" ", 20), collapse = " ")
+forest_data_plot <- forest_data_full %>%
+  select(Subgroup, Group, Number, `No. of death (%)`, ` `, `HR (95%CI)`, `P-value`)  # 列順: Forest Plotが5列目
+
+# Step 5: forestploterでプロット作成
+library(forestploter)
+library(grid)
+
+# フォレストプロット作成
+forest_plot_combined <- forestploter::forest(
+  data = forest_data_plot,
+  est = forest_data_full$HR,
+  lower = forest_data_full$CI_low,
+  upper = forest_data_full$CI_high,
+  sizes = 0.6,
+  ci_column = 5,  # 空白列の位置
+  ref_line = 1,
+  x_trans = "log",
+  xlim = c(0.5, 10),
+  ticks_at = c(0.5, 1, 2, 4, 8),
+  arrow_lab = c("Favors AKD", "Favors nonAKD")
+)
+
+# テキストフォーマット設定
+# Number列とNo. of death列を右揃えに
+forest_plot_combined <- edit_plot(
+  forest_plot_combined,
+  col = c(3, 4),  # Number列とNo. of death列
+  which = "text",
+  hjust = unit(1, "npc"),  # 右揃え
+  x = unit(1, "npc")
+)
+
+# ヘッダー下に横線を追加
+forest_plot_combined <- add_border(
+  forest_plot_combined,
+  row = 0,  # ヘッダー行
+  where = "bottom",
+  gp = gpar(lwd = 1)
+)
+
+# 行間調整
+forest_plot_combined$heights <- rep(unit(8, "mm"), nrow(forest_plot_combined))
+
+# 表示
+plot(forest_plot_combined)
+
+# Step 6: 論文用保存（TIFF 600dpi）
+setwd("E:/R")
+
+# TIFFで保存（余白を最小化）
+tiff(
+  filename = "Supplementary_Figure_ForestPlot_Overall_CKD_Subgroup.tiff",
+  width = 240,   # mm
+  height = 110,  # mm
+  units = "mm",
+  res = 600,
+  compression = "lzw"
+)
+# 余白を最小化（左右0.5%、上1%、下0.5%）
+grid.newpage()
+pushViewport(viewport(x = unit(0.005, "npc"), y = unit(0.005, "npc"),
+                      width = unit(0.99, "npc"), height = unit(0.985, "npc"),
+                      just = c("left", "bottom")))
+grid.draw(forest_plot_combined)
+popViewport()
+dev.off()
+
+# PDFでも保存（同じ設定で）
+cairo_pdf(
+  filename = "Supplementary_Figure_ForestPlot_Overall_CKD_Subgroup.pdf",
+  width = 240 / 25.4,  # インチ変換（240mm）
+  height = 110 / 25.4  # インチ変換（110mm）
+)
+# 余白を最小化（左右0.5%、上1%、下0.5%）
+grid.newpage()
+pushViewport(viewport(x = unit(0.005, "npc"), y = unit(0.005, "npc"),
+                      width = unit(0.99, "npc"), height = unit(0.985, "npc"),
+                      just = c("left", "bottom")))
+grid.draw(forest_plot_combined)
+popViewport()
+dev.off()
