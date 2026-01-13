@@ -542,6 +542,253 @@ p_1y_3y <-
     axis.text.x      = element_blank()
   )
 
+# ********参考: 論文スタイルの改良版（サンプルサイズ・差分・P値付き）********
+
+# Step 1: サンプルサイズの取得（longdatから計算）
+sample_sizes <- longdat %>%
+  mutate(
+    window = case_when(
+      years_from_time0 <= 1 ~ "≤1 year",
+      years_from_time0 <= 3 ~ "≤3 years",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(window)) %>%
+  distinct(id, jin_label, window) %>%
+  count(jin_label, window, name = "n") %>%
+  rename(group = jin_label) %>%
+  mutate(group = as.character(group))
+
+# Step 2: 群間差（Difference）の計算
+# まず、df_contrastの中身を確認
+cat("\n=== df_contrast の window 列のユニーク値 ===\n")
+print(unique(df_contrast$window))
+cat("\n=== df_contrast の model 列のユニーク値 ===\n")
+print(unique(df_contrast$model))
+cat("\n=== df_contrast の contrast 列のユニーク値 ===\n")
+print(unique(df_contrast$contrast))
+
+# df_contrastから≤1年と≤3年のSlope-adjustedを抽出
+# 注意: df_contrastのmodelは"③ Slope-adjusted"（丸数字付き）
+# nonAKDとの比較のみを抽出（Non-Recovery − Recoveryは除外）
+differences <- df_contrast %>%
+  dplyr::filter(
+    window %in% c("≤1 year", "≤3 years"),
+    model == "③ Slope-adjusted",  # 丸数字付きに修正
+    contrast %in% c("Recovery − nonAKD", "Non-Recovery − nonAKD")  # nonAKDとの比較のみ
+  ) %>%
+  dplyr::mutate(
+    group = case_when(
+      contrast == "Recovery − nonAKD" ~ "Recovery",
+      contrast == "Non-Recovery − nonAKD" ~ "Non-Recovery",
+      TRUE ~ contrast
+    )
+  ) %>%
+  dplyr::select(window, group,
+                diff_value = diff,
+                diff_lower = lower,
+                diff_upper = upper,
+                diff_p = p_value)
+
+cat("\n=== differences の行数 ===\n")
+print(nrow(differences))
+cat("\n=== differences の中身 ===\n")
+print(differences)
+
+# nonAKD用のReference行を追加
+differences <- bind_rows(
+  tibble(
+    window = rep(c("≤1 year", "≤3 years"), each = 1),
+    group = "nonAKD",
+    diff_value = NA_real_,
+    diff_lower = NA_real_,
+    diff_upper = NA_real_,
+    diff_p = NA_real_
+  ),
+  differences
+)
+
+# Step 3: データ統合（groupの順序を正しく設定）
+# 注意: df_plotのmodelは"Slope-adjusted"（丸数字なし）
+df_fig4_enhanced <- df_plot %>%
+  filter(
+    window %in% c("≤1 year", "≤3 years"),
+    model == "Slope-adjusted"  # df_plotでは丸数字なし
+  ) %>%
+  mutate(group = as.character(group)) %>%
+  left_join(sample_sizes, by = c("group", "window")) %>%
+  left_join(differences, by = c("group", "window"), suffix = c("", "_diff")) %>%
+  # groupの順序を正しく設定（nonAKD, Recovery, Non-Recovery）
+  mutate(
+    group = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery"))
+  )
+
+cat("\n=== df_fig4_enhanced の結合結果確認 ===\n")
+print(df_fig4_enhanced)
+
+# Step 4: プロット作成
+# Y軸の最小値と最大値を事前に計算（警告回避のため）
+y_min <- min(df_fig4_enhanced$lower, na.rm = TRUE)
+y_max <- max(df_fig4_enhanced$upper, na.rm = TRUE)
+
+p_1y_3y_enhanced <- ggplot(
+  df_fig4_enhanced,
+  aes(x = group, y = estimate, fill = group)
+) +
+  # 棒グラフ
+  geom_col(width = 0.7, alpha = 0.85) +
+
+  # エラーバー
+  geom_errorbar(
+    aes(ymin = lower, ymax = upper),
+    width = 0.25,
+    linewidth = 0.7
+  ) +
+
+  # サンプルサイズ（棒の上）
+  geom_text(
+    aes(
+      y = pmax(upper, 0) + 0.5,
+      label = paste0("n=", n)
+    ),
+    size = 3.5,
+    fontface = "bold",
+    color = "grey20"
+  ) +
+
+  # Slope値と95%CI（棒の下、Y=0より下）
+  geom_text(
+    aes(
+      y = pmin(lower, 0) - 0.8,
+      label = sprintf("%.2f\n(%.2f, %.2f)", estimate, lower, upper)
+    ),
+    size = 3,
+    lineheight = 0.9,
+    color = "grey10"
+  ) +
+
+  # Difference（グラフ最下部）
+  geom_text(
+    aes(
+      label = ifelse(
+        group == "nonAKD",
+        "Reference",
+        sprintf("Diff: %.2f (%.2f, %.2f)", diff_value, diff_lower, diff_upper)
+      )
+    ),
+    y = y_min - 3.5,
+    size = 3,
+    fontface = "italic",
+    color = "grey30"
+  ) +
+
+  # P-value（Differenceの下）
+  geom_text(
+    aes(
+      label = ifelse(
+        group == "nonAKD",
+        "",
+        case_when(
+          is.na(diff_p) ~ "",
+          diff_p < 0.001 ~ "p<0.001",
+          diff_p < 0.01 ~ sprintf("p=%.3f", diff_p),
+          TRUE ~ sprintf("p=%.2f", diff_p)
+        )
+      )
+    ),
+    y = y_min - 4.5,
+    size = 3,
+    fontface = "bold",
+    color = "grey20"
+  ) +
+
+  # ファセット
+  facet_grid(. ~ window) +
+
+  # ラベル
+  labs(
+    x = NULL,
+    y = expression(paste("Mean change in eGFR (mL/min/1.73 m"^2," per year)")),
+    fill = "Group"
+  ) +
+
+  # 色（シンプルで直感的）
+  scale_fill_manual(
+    values = c(
+      nonAKD         = "#95A5A6",
+      Recovery       = "#2ECC71",
+      `Non-Recovery` = "#E74C3C"
+    ),
+    labels = c(
+      nonAKD = "No AKD",
+      Recovery = "AKD with Recovery",
+      `Non-Recovery` = "AKD without Recovery"
+    )
+  ) +
+
+  # Y軸範囲（Difference/P値表示のため下方向に拡張）
+  coord_cartesian(
+    ylim = c(
+      y_min - 5.5,
+      max(df_fig4_enhanced$upper, na.rm = TRUE) + 1.5
+    ),
+    clip = "off"
+  ) +
+
+  # テーマ（グリッドなし、シンプル）
+  theme_classic(base_size = 13) +
+  theme(
+    # パネル（上部に境界線を表示）
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "grey30", fill = NA, linewidth = 0.6),
+    panel.background = element_rect(fill = "white", color = NA),
+
+    # ファセットラベル（背景色なし）
+    strip.background = element_blank(),
+    strip.text = element_text(size = 12, face = "bold", color = "grey20",
+                              margin = margin(t = 2, b = 5)),
+    strip.placement = "outside",
+    panel.spacing.x = unit(1.5, "lines"),
+
+    # 軸
+    axis.line.y = element_blank(),  # panel.borderを使うのでaxis.lineは不要
+    axis.line.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text.y = element_text(size = 11),
+
+    # 凡例
+    legend.position = "bottom",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.key.size = unit(1.2, "lines"),
+    legend.background = element_blank(),
+
+    # マージン（下部を広げてDifference/P値の表示スペース確保、上部も少し広げる）
+    plot.margin = margin(t = 15, r = 15, b = 20, l = 10)
+  )
+
+# プレビュー
+print(p_1y_3y_enhanced)
+
+# 保存（論文用）
+ggsave(
+  "Figure4_eGFR_slopes_1y_3y_publication_style.pdf",
+  plot = p_1y_3y_enhanced,
+  width = 200, height = 140, units = "mm",
+  device = cairo_pdf, dpi = 300
+)
+
+ggsave(
+  "Figure4_eGFR_slopes_1y_3y_publication_style.tiff",
+  plot = p_1y_3y_enhanced,
+  width = 200, height = 140, units = "mm",
+  device = "tiff", dpi = 600, compression = "lzw"
+)
+
+# ************************************************************************
+
 
 #---- 1年以内と全期間のみ#####
 p_1y_all <- 
@@ -619,7 +866,7 @@ if (use_ragg) {
 
 
 #95％信頼区間など
-{slope_contrast_by_group <- function(fit, model_label, window_label, level = 0.95){
+slope_contrast_by_group <- function(fit, model_label, window_label, level = 0.95){
   cf <- names(fixef(fit))
   v <- function(g){
     vec <- rep(0, length(cf)); names(vec) <- cf
