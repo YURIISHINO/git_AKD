@@ -7,7 +7,7 @@ library(forestploter)
 library(grid)
 
 # CSVファイルをtibbleとして読み込む_藤倉用
-setwd("E:/R")
+setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 colnames(jin1_Eligibile)
 # 1人1行（index_date当日レコードのみ・最初のindex_dateを採用）
@@ -331,7 +331,7 @@ hr_int_table <- function(fit){
 hr_int <- hr_int_table(cox_int)
 print(hr_int)
 
-setwd("E:/R")
+setwd("X:/R")
 # Supplementary Table 1 を CSV で保存
 write.csv(hr_int,
           file = "Supplementary_Table1_hr_by_CKD.csv",

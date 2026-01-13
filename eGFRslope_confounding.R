@@ -1,6 +1,5 @@
 {
-#eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
-{
+{#eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
 library(nlme)
 library(dplyr)
 library(ggplot2)
@@ -98,36 +97,9 @@ library(dplyr)
 library(readr)
 library(nlme)
 library(tidyr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-
-# AKD_status × jin_status のクロス集計(確認用)
-dat_id <- jin1_Eligibile %>%
-  distinct(id, .keep_all = TRUE)
-# AKD_status × jin_status のクロス集計
-table_id <- dat_id %>%
-  count(AKD_status, jin_status) %>%
-  pivot_wider(
-    names_from = jin_status,
-    values_from = n,
-    values_fill = 0
-  )
-table_id
-
 jin1_inclusion <- read_csv("jin1_inclusion.csv", locale = locale(encoding = "SHIFT-JIS"))
-colnames(jin1_inclusion)
-# AKD_status × jin_status のクロス集計
-dat_id_inclusion <- jin1_inclusion %>%
-  distinct(id, .keep_all = TRUE)
-table_id_inclusion <- dat_id_inclusion %>%
-  count(AKD_status, jin_status) %>%
-  pivot_wider(
-    names_from = jin_status,
-    values_from = n,
-    values_fill = 0
-  )
-table_id_inclusion
-
 akd_time_m <- jin1_inclusion %>%
   mutate(
     years_from_time0 = as.numeric(date - time0) / 365.25  # 年単位に変換
@@ -223,40 +195,6 @@ fit_slope_adj <- lme(
 )
 #1年以内、2年以内、3年以内のモデル作成
 {
-# 1年以内
-fit_base_1y <- lme(
-  egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1,
-  random = list(id = pdSymm(~ 1 + years_from_time0)),
-  na.action = na.omit,
-  data = filter(longdat, years_from_time0 <= 1),
-  method = "REML",
-  control = lmeControl(maxIter = 1e8, msMaxIter = 1e8, 
-                       opt = "optim", optimMethod = "L-BFGS-B")
-  #control = ctrl
-)
-  
-# 2年以内
-fit_base_2y <- lme(
-  egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1,
-  random = list(id = pdSymm(~ 1 + years_from_time0)),
-  na.action = na.omit,
-  data = filter(longdat, years_from_time0 <= 2),
-  method = "REML",
-  control = lmeControl(maxIter = 1e8, msMaxIter = 1e8, 
-                       opt = "optim", optimMethod = "L-BFGS-B")
-  #control = ctrl
-)
-# 3年以内
-fit_base_3y <- lme(
-  egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1,
-  random = list(id = pdSymm(~ 1 + years_from_time0)),
-  na.action = na.omit,
-  data = filter(longdat, years_from_time0 <= 3),
-  method = "REML",
-  control = lmeControl(maxIter = 1e8, msMaxIter = 1e8, 
-                       opt = "optim", optimMethod = "L-BFGS-B")
-  #control = ctrl
-)
 # 1年以内
 fit_base_1y <- lme(
   egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1,
@@ -544,7 +482,7 @@ df_plot <- df_plot %>%
   # （もし完全重複があれば念のため除去）
   distinct(window, model, group, .keep_all = TRUE)
 
-#1～3年と全期間
+#1～3年と全期間####
 p_all <- 
   ggplot(df_plot, aes(x = group, y = estimate, fill = group)) +
   geom_col(width = 0.65) +
@@ -565,7 +503,7 @@ p_all <-
     axis.text.x  = element_blank()  # 軸ラベル非表示
   )
 
-#---- 1年以内と3年以内，Slope-adjustedモデルだけ ----#
+#1年以内と3年以内，Slope-adjustedモデルだけ#####
 p_1y_3y <- 
   ggplot(
     df_plot %>% 
@@ -605,7 +543,7 @@ p_1y_3y <-
   )
 
 
-#---- 1年以内と全期間のみ ----#
+#---- 1年以内と全期間のみ#####
 p_1y_all <- 
   ggplot(df_plot %>% filter(window %in% c("≤1 year", "All period")),
          aes(x = group, y = estimate, fill = group)) +
@@ -648,7 +586,7 @@ library(Cairo)
 # ── 保存（論文向け推奨：PDF(ベクター) と TIFF(600 dpi)） ─────────
 # 仕上がりサイズ：幅 180 mm, 高さ 120 mm（2段組誌に汎用）
 w_mm <- 180; h_mm <- 120
-outdir <- "E:/R"
+outdir <- "X:/R"
 ## CairoでPDF（フォント埋め込み）; Windowsなら 'device = "cairo_pdf"' が安定
 ggsave(file.path(outdir, "Figure4_all_windows.pdf"),
        plot = p_all, width = w_mm, height = h_mm, units = "mm",
@@ -749,12 +687,33 @@ print(df_contrast_out, n = Inf, width = Inf)
 
 #感度分析(recoveryの定義変更)#####
 {
-library(dplyr)
-library(nlme)
-library(multcomp)  # glhtを使うので明示
-# baseline_cov と covars は既存の主解析と同じ定義を使う前提
+# ============================================================
+# Sensitivity analysis (recovery definition change)
+# Main-analysis style: NO time centering (use years_from_time0)
+# Windows: ≤1y / ≤3y
+# Output: slopes by group + 95%CI via glht, and optional contrasts
+# ============================================================
 
-# --- 1) ラベル定義：No-dataを明示化 ---
+library(readr)
+library(dplyr)
+library(tidyr)
+library(nlme)
+library(multcomp)
+library(ggplot2)
+library(purrr)
+library(stringr)
+
+setwd("X:/R")
+
+# -----------------------------
+# 0) Load
+# -----------------------------
+jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
+jin1_inclusion <- read_csv("jin1_inclusion.csv", locale = locale(encoding = "SHIFT-JIS"))
+
+# -----------------------------
+# 1) Sensitivity label (No-data explicitly)
+# -----------------------------
 jin1_inclusion_sens <- jin1_inclusion %>%
   filter(exclude == "include", jin_status %in% c("AKD","nonAKD")) %>%
   mutate(
@@ -766,12 +725,13 @@ jin1_inclusion_sens <- jin1_inclusion %>%
       jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
       jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ "No-data",
       TRUE ~ NA_character_
-    )
+    ),
+    jin_label_sens = factor(jin_label_sens, levels = c("nonAKD","Recovery","Non-Recovery","No-data"))
   )
 
-# ※CSV往復はしない（UTF-8↔SJIS問題回避）
-
-# --- 2) 時間・CKD整備 ---
+# -----------------------------
+# 2) Time + CKD handling
+# -----------------------------
 akd_time_sens <- jin1_inclusion_sens %>%
   mutate(
     years_from_time0 = as.numeric(date - time0) / 365.25,
@@ -779,9 +739,30 @@ akd_time_sens <- jin1_inclusion_sens %>%
   ) %>%
   filter(years_from_time0 >= 0)
 
-# --- 3) longデータ作成：No-data除外 → baseline_cov結合 → 中心化 ---
+# -----------------------------
+# 3) Baseline covariates (same as main analysis style)
+# -----------------------------
+baseline_cov <- jin1_Eligibile %>%
+  filter(exclude == "include") %>%
+  group_by(id) %>%
+  arrange(index_date) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(arb_acei_use = if_else(arb == 1 | acei == 1, 1L, 0L)) %>%
+  dplyr::select(
+    id, age, sex, arb_acei_use,
+    dn1, dn3, dn4, dn5, dn6, dn7, dn8, dn9, dn10, dn12, dn13, dn14, dn15
+  )
+
+covars <- c("age","sex","arb_acei_use",
+            "dn1","dn3","dn4","dn5","dn6","dn7","dn8","dn9","dn10","dn12","dn13","dn14","dn15")
+
+# -----------------------------
+# 4) Long data (exclude No-data) + join baseline + centering for covariates only
+#     ※ time is NOT centered (years_from_time0 그대로)
+# -----------------------------
 longdat_sens <- akd_time_sens %>%
-  dplyr::select(-any_of(covars)) %>%                 # 既存covarsと衝突回避
+  dplyr::select(-any_of(covars)) %>%   # avoid duplicated names before join
   filter(jin_label_sens != "No-data") %>%
   left_join(baseline_cov, by = "id") %>%
   mutate(
@@ -790,264 +771,272 @@ longdat_sens <- akd_time_sens %>%
     jin_label_sens = factor(jin_label_sens, levels = c("nonAKD","Recovery","Non-Recovery"))
   )
 
-# --- 4) 収束安定化：各idで時点>=2＆time分散>0、time中心化 ---
-longdat_sens <- longdat_sens %>%
-  group_by(id) %>%
-  mutate(n_time = n_distinct(date),
-         var_t  = var(years_from_time0, na.rm = TRUE)) %>%
-  ungroup() %>%
-  filter(n_time >= 2, !is.na(var_t), var_t > 0) %>%
-  mutate(years_c = as.numeric(scale(years_from_time0, center = TRUE, scale = FALSE)))
+# -----------------------------
+# 5) Convergence stabilization filter (same idea as your sens code)
+#     Each id: >=2 time points and var(time)>0
+# -----------------------------
+#longdat_sens <- longdat_sens %>%
+#  group_by(id) %>%
+#  mutate(n_time = n_distinct(date),
+#         var_t  = var(years_from_time0, na.rm = TRUE)) %>%
+#  ungroup() %>%
+#  filter(n_time >= 2, !is.na(var_t), var_t > 0)
 
-# --- 5) モデル当て：まずpdDiag（安定）→必要ならpdSymmへ ---
-# ① Base（CKDなし）
-fit_base_sens <- lme(
-  egfr ~ years_c * jin_label_sens + time0_egfr_c - 1,
-  random = list(id = pdDiag(~ 1 + years_c)),
-  data = longdat_sens, na.action = na.omit, method = "REML",
-  control = lmeControl(opt="optim", msMaxIter=1e5, maxIter=1e5, niterEM=30, tolerance=1e-6)
-)
+# ============================================================
+# 6) Fit models in each window (≤1y / ≤3y) — NO time centering
+#    Random structure: choose pdSymm like main analysis, but fallback to pdDiag if needed
+# ============================================================
 
-# ② Level-adjusted（CKDなし）
-fit_level_adj_sens <- update(
-  fit_base_sens,
-  . ~ . + age_c + sex + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15
-)
+ctrl_main <- lmeControl(maxIter = 1e8, msMaxIter = 1e8, opt = "optim", optimMethod = "L-BFGS-B")
 
-# ③ Slope-adjusted（CKDなし）
-fit_slope_adj_sens <- update(
-  fit_level_adj_sens,
-  . ~ . + years_c:(age_c + arb_acei_use +
-                     dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
-                     dn10 + dn12 + dn13 + dn14 + dn15)
-)
-
-# --- （任意）CKDを含めた感度解析版 ---
-fit_level_adj_sens_ckd <- update(
-  fit_base_sens,
-  . ~ . + age_c + sex + arb_acei_use + CKD_status +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15
-)
-
-fit_slope_adj_sens_ckd <- update(
-  fit_level_adj_sens_ckd,
-  . ~ . + years_c:(age_c + arb_acei_use + CKD_status +
-                     dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
-                     dn10 + dn12 + dn13 + dn14 + dn15)
-)
-
-# ==== 1) ≤1年データを作って years_c を再中心化 ====
-longdat_sens_1y <- longdat_sens %>%
-  filter(years_from_time0 <= 1) %>%                  # 1年以内に限定
-  group_by(id) %>%
-  mutate(n_time_1y = n_distinct(date),
-         var_t_1y  = var(years_from_time0, na.rm = TRUE)) %>%
-  ungroup() %>%
-  filter(n_time_1y >= 2, !is.na(var_t_1y), var_t_1y > 0) %>%
-  mutate(years_c = as.numeric(scale(years_from_time0, center = TRUE, scale = FALSE)))  # 再中心化
-
-# ==== 2) ≤1年の3モデルを推定（式はALLと同じ） ====
-fit_base_sens_1y <- lme(
-  egfr ~ years_c * jin_label_sens + time0_egfr_c - 1,
-  random = list(id = pdDiag(~ 1 + years_c)),
-  data = longdat_sens_1y, na.action = na.omit, method = "REML",
-  control = lmeControl(opt="optim", msMaxIter=1e5, maxIter=1e5, niterEM=30, tolerance=1e-6)
-)
-
-fit_level_adj_sens_1y <- update(
-  fit_base_sens_1y,
-  . ~ . + age_c + sex + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15
-)
-
-fit_slope_adj_sens_1y <- update(
-  fit_level_adj_sens_1y,
-  . ~ . + years_c:(age_c + arb_acei_use +
-                     dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
-                     dn10 + dn12 + dn13 + dn14 + dn15)
-)
-
-# ==== 3) ALL と ≤1年のスロープ+95%CIを抽出して結合 ====
-library(dplyr)
-library(nlme)
-
-# 1つの lme オブジェクトから
-#  nonAKD / Recovery / Non-Recovery のスロープと95%CIを取り出す関数
-slope_ci_by_group_sens <- function(fit, model_label) {
+fit_3models <- function(dat, random_struct = c("pdSymm","pdDiag")) {
   
-  cf <- fixef(fit)        # 固定効果係数
-  V  <- vcov(fit)         # 固定効果の分散共分散行列
+  random_struct <- match.arg(random_struct)
   
-  # 線形結合 L'β から推定値と95%CIを出す小さな関数
-  extract_slope <- function(group_label) {
-    
-    # 係数名ベクトルに合わせた L をゼロで初期化
-    L <- rep(0, length(cf))
-    names(L) <- names(cf)
-    
-    ## 基本スロープ（nonAKD 群の years_c）
-    if ("years_c" %in% names(cf)) {
-      L["years_c"] <- 1
-    }
-    
-    ## 交互作用をグループごとに足す
-    if (group_label == "Recovery") {
-      nm <- "years_c:jin_label_sensRecovery"
-      if (nm %in% names(cf)) L[nm] <- 1
-    }
-    
-    if (group_label == "Non-Recovery") {
-      nm <- "years_c:jin_label_sensNon-Recovery"
-      if (nm %in% names(cf)) L[nm] <- 1
-    }
-    
-    # 推定値とSE, 95%CI
-    est <- sum(L * cf)
-    se  <- sqrt( as.numeric(t(L) %*% V %*% L) )
-    lower <- est - 1.96 * se
-    upper <- est + 1.96 * se
-    
-    tibble(
-      model    = model_label,
-      group    = group_label,
-      estimate = est,
-      lower    = lower,
-      upper    = upper
-    )
+  rand <- if (random_struct == "pdSymm") {
+    list(id = pdSymm(~ 1 + years_from_time0))
+  } else {
+    list(id = pdDiag(~ 1 + years_from_time0))
   }
   
-  # 3群分を bind
-  bind_rows(
-    extract_slope("nonAKD"),
-    extract_slope("Recovery"),
-    extract_slope("Non-Recovery")
+  # Base
+  fit_base <- lme(
+    egfr ~ years_from_time0 * jin_label_sens + time0_egfr_c - 1,
+    random = rand,
+    data = dat, na.action = na.omit, method = "REML",
+    control = ctrl_main
+  )
+  
+  # Level-adjusted
+  fit_level <- update(
+    fit_base,
+    . ~ . + age_c + sex + arb_acei_use +
+      dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
+      dn10 + dn12 + dn13 + dn14 + dn15
+  )
+  
+  # Slope-adjusted
+  fit_slope <- update(
+    fit_level,
+    . ~ . + years_from_time0:(age_c + arb_acei_use +
+                                dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
+                                dn10 + dn12 + dn13 + dn14 + dn15)
+  )
+  
+  list(
+    Base = fit_base,
+    `Level-adjusted` = fit_level,
+    `Slope-adjusted` = fit_slope
   )
 }
 
-models_all <- list(
-  "Base"           = fit_base_sens,
-  "Level-adjusted" = fit_level_adj_sens,
-  "Slope-adjusted" = fit_slope_adj_sens
+# ---- windowed datasets ----
+dat_1y <- longdat_sens %>% filter(years_from_time0 <= 1)
+dat_3y <- longdat_sens %>% filter(years_from_time0 <= 3)
+
+# ---- try pdSymm first (main analysis style); if error then pdDiag ----
+safe_fit <- function(dat){
+  out <- try(fit_3models(dat, "pdSymm"), silent = TRUE)
+  if (inherits(out, "try-error")) out <- fit_3models(dat, "pdDiag")
+  out
+}
+
+fits_sens <- list(
+  "≤1 year" = safe_fit(dat_1y),
+  "≤3 years" = safe_fit(dat_3y)
 )
 
-models_1y <- list(
-  "Base"           = fit_base_sens_1y,
-  "Level-adjusted" = fit_level_adj_sens_1y,
-  "Slope-adjusted" = fit_slope_adj_sens_1y
-)
+# ============================================================
+# 7) Extract slopes by group + 95%CI via glht (same as main analysis style)
+# ============================================================
 
-df_all <- purrr::imap_dfr(models_all, ~ slope_ci_by_group_sens(.x, .y)) %>%
-  dplyr::mutate(window = "All period")
-
-df_1y  <- purrr::imap_dfr(models_1y,  ~ slope_ci_by_group_sens(.x, .y)) %>%
-  dplyr::mutate(window = "\u22641 year")  # "≤1 year"
-
-df_slope_2win <- dplyr::bind_rows(df_1y, df_all) %>%
-  dplyr::mutate(
-    model  = forcats::fct_relevel(model, c("Base","Level-adjusted","Slope-adjusted")),
-    group  = forcats::fct_relevel(group, c("nonAKD","Recovery","Non-Recovery")),
-    window = factor(window, levels = c("\u22641 year","All period"))
-  )
-
-library(dplyr)
-library(multcomp)
-library(ggplot2)
-
-get_slopes_3group <- function(fit, window_label,
-                              group_levels = c("nonAKD", "Recovery", "Non-Recovery")) {
+slope_ci_by_group_sens <- function(fit, model_label, window_label,
+                                   group_levels = c("nonAKD","Recovery","Non-Recovery")) {
   
   cf <- names(fixef(fit))
-  time_term <- if ("years_c" %in% cf) "years_c" else "years_from_time0"
-  if (!time_term %in% cf) stop("時間項（years_c / years_from_time0）が見つかりません。")
   
-  int_recovery <- paste0(time_term, ":jin_labelRecovery")
-  int_nonrec   <- paste0(time_term, ":jin_labelNon-Recovery")
-  
-  v <- function(group){
-    L <- rep(0, length(cf)); names(L) <- cf
-    L[time_term] <- 1
-    if (group == "Recovery" && int_recovery %in% cf) L[int_recovery] <- 1
-    if (group == "Non-Recovery" && int_nonrec   %in% cf) L[int_nonrec]   <- 1
-    L
+  v <- function(g){
+    vec <- rep(0, length(cf)); names(vec) <- cf
+    
+    # base slope
+    if ("years_from_time0" %in% cf) vec["years_from_time0"] <- 1
+    
+    # add interaction for each group (NOTE: jin_label_sens)
+    if (g == "Recovery" && "years_from_time0:jin_label_sensRecovery" %in% cf)
+      vec["years_from_time0:jin_label_sensRecovery"] <- 1
+    
+    if (g == "Non-Recovery" && "years_from_time0:jin_label_sensNon-Recovery" %in% cf)
+      vec["years_from_time0:jin_label_sensNon-Recovery"] <- 1
+    
+    vec
   }
   
-  K <- rbind(
-    "nonAKD"       = v("nonAKD"),
-    "Recovery"     = v("Recovery"),
-    "Non-Recovery" = v("Non-Recovery")
+  L <- rbind(
+    nonAKD        = v("nonAKD"),
+    Recovery      = v("Recovery"),
+    `Non-Recovery`= v("Non-Recovery")
   )
   
-  g  <- glht(fit, linfct = K)
-  ci <- confint(g)$confint
+  ci <- suppressMessages(confint(glht(fit, linfct = L)))
   
   tibble(
-    window   = window_label,
-    model    = "Slope-adjusted",
-    group    = rownames(ci),
-    estimate = ci[, "Estimate"],
-    lower    = ci[, "lwr"],
-    upper    = ci[, "upr"]
+    group    = rownames(L),
+    estimate = ci$confint[, "Estimate"],
+    lower    = ci$confint[, "lwr"],
+    upper    = ci$confint[, "upr"],
+    model    = model_label,
+    window   = window_label
   ) %>%
     mutate(
-      window = factor(window, levels = c("≤1 year", "≤3 years")),
+      model  = factor(model,  levels = c("Base","Level-adjusted","Slope-adjusted")),
+      window = factor(window, levels = c("≤1 year","≤3 years")),
       group  = factor(group,  levels = group_levels)
     )
 }
 
-# ---- ここで作ったdfを「上書きしない」 ----
-df_slope_1y3y_slopeadj <- bind_rows(
-  get_slopes_3group(fit_slope_adj_1y, "≤1 year"),
-  get_slopes_3group(fit_slope_adj_3y, "≤3 years")
-)
+df_plot_sens <- purrr::imap_dfr(fits_sens, function(models, win){
+  purrr::imap_dfr(models, function(fit, mdl){
+    slope_ci_by_group_sens(fit, model_label = mdl, window_label = win)
+  })
+})
 
-# 確認（ここが両方3ずつ出ればOK）
-table(df_slope_1y3y_slopeadj$window)
+# check
+df_plot_sens %>% count(window, model, group)
 
-p_1y3y_slopeadj <- ggplot(df_slope_1y3y_slopeadj, aes(x = group, y = estimate, fill = group)) +
-  geom_hline(yintercept = 0, linewidth = 0.4, colour = "grey40") +
+# ============================================================
+# 8) (Optional) contrasts of slope differences via glht (pairwise)
+# ============================================================
+
+slope_contrast_sens <- function(fit, window_label, model_label){
+  
+  cf <- names(fixef(fit))
+  
+  # build slope vectors
+  v <- function(g){
+    vec <- rep(0, length(cf)); names(vec) <- cf
+    if ("years_from_time0" %in% cf) vec["years_from_time0"] <- 1
+    if (g == "Recovery" && "years_from_time0:jin_label_sensRecovery" %in% cf)
+      vec["years_from_time0:jin_label_sensRecovery"] <- 1
+    if (g == "Non-Recovery" && "years_from_time0:jin_label_sensNon-Recovery" %in% cf)
+      vec["years_from_time0:jin_label_sensNon-Recovery"] <- 1
+    vec
+  }
+  
+  L <- rbind(
+    nonAKD         = v("nonAKD"),
+    Recovery       = v("Recovery"),
+    `Non-Recovery` = v("Non-Recovery")
+  )
+  
+  K <- rbind(
+    "Recovery vs nonAKD"         = L["Recovery",]      - L["nonAKD",],
+    "Non-Recovery vs nonAKD"     = L["Non-Recovery",]  - L["nonAKD",],
+    "Non-Recovery vs Recovery"   = L["Non-Recovery",]  - L["Recovery",]
+  )
+  
+  g <- glht(fit, linfct = K)
+  ci <- confint(g)$confint
+  
+  tibble(
+    window   = window_label,
+    model    = model_label,
+    contrast = rownames(ci),
+    estimate = ci[, "Estimate"],
+    lower    = ci[, "lwr"],
+    upper    = ci[, "upr"],
+    p        = summary(g)$test$pvalues
+  ) %>%
+    mutate(
+      model  = factor(model,  levels = c("Base","Level-adjusted","Slope-adjusted")),
+      window = factor(window, levels = c("≤1 year","≤3 years"))
+    )
+}
+
+df_contrast_sens <- purrr::imap_dfr(fits_sens, function(models, win){
+  purrr::imap_dfr(models, function(fit, mdl){
+    slope_contrast_sens(fit, window_label = win, model_label = mdl)
+  })
+})
+
+# ============================================================
+# 9) Plots (main-analysis-like)
+#    A) All models x windows
+# ============================================================
+p_sens_all <- ggplot(df_plot_sens, aes(x = group, y = estimate, fill = group)) +
   geom_col(width = 0.65) +
   geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, linewidth = 0.5) +
-  facet_grid(. ~ window)+
+  facet_grid(model ~ window, drop = FALSE) +
   labs(
-    title = "Estimated eGFR slopes by group\n(≤1 year vs ≤3 years; Slope-adjusted model; Sensitivity Analysis)",
+    title = "Sensitivity analysis: Estimated eGFR slopes by group\n(across models and time windows; no time centering)",
     x = NULL,
     y = expression(paste("Slope (mL/min/1.73 m"^2," per year), 95% CI")),
     fill = "Group"
   ) +
-  scale_fill_manual(values = c(
-    nonAKD = "#E41A1C", Recovery = "#4DAF4A", `Non-Recovery` = "#377EB8"
-  )) +
+  scale_fill_manual(values = c(nonAKD="#E41A1C", Recovery="#4DAF4A", `Non-Recovery`="#377EB8")) +
   theme_bw(base_size = 12) +
   theme(
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey95", colour = NA),
-    strip.text        = element_text(size = 10, face = "bold", lineheight = 1.05),
-    legend.position   = "bottom",
-    legend.key.height = unit(0.5, "lines"),
-    legend.key.width  = unit(1.2, "lines"),
-    axis.title.y      = element_text(margin = margin(r = 6)),
-    plot.title        = element_text(hjust = 0, face = "bold", lineheight = 1.1, margin = margin(b = 8)),
-    plot.margin       = margin(t = 6, r = 8, b = 6, l = 6),
-    panel.spacing.y   = unit(1.2, "lines"),
-    axis.text.x       = element_blank(),
-    axis.ticks.x      = element_blank()
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey95", colour = NA),
+    legend.position = "bottom",
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank()
   )
 
-# 保存
-setwd("E:/R")
+#    B) Slope-adjusted only, ≤1y vs ≤3y
+p_sens_1y3y_slopeadj <- ggplot(
+  df_plot_sens %>% filter(model == "Slope-adjusted"),
+  aes(x = group, y = estimate, fill = group)
+) +
+  geom_hline(yintercept = 0, linewidth = 0.4, colour = "grey40") +
+  geom_col(width = 0.65) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, linewidth = 0.5) +
+  facet_grid(. ~ window) +
+  labs(
+    title = "Sensitivity analysis: Estimated eGFR slopes (≤1 year vs ≤3 years)\nSlope-adjusted model; no time centering",
+    x = NULL,
+    y = expression(paste("Slope (mL/min/1.73 m"^2," per year), 95% CI")),
+    fill = "Group"
+  ) +
+  scale_fill_manual(values = c(nonAKD="#E41A1C", Recovery="#4DAF4A", `Non-Recovery`="#377EB8")) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey95", colour = NA),
+    legend.position = "bottom",
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+# ============================================================
+# 10) Save
+# ============================================================
 w_in <- 180/25.4
 h_in <- 120/25.4
 
-ggsave("Figure5b_eGFR_slopes_1y_3y_slopeAdjusted.pdf",
-       plot = p_1y3y_slopeadj, device = cairo_pdf, width = w_in, height = h_in, units = "in")
+ggsave("Figure5b_sens_slopes_allModels_1y_3y.pdf",
+       plot = p_sens_all, device = cairo_pdf, width = w_in, height = h_in, units = "in")
 
-ggsave("Figure5b_eGFR_slopes_1y_3y_slopeAdjusted_600dpi.tiff",
-       plot = p_1y3y_slopeadj, device = "tiff", compression = "lzw", dpi = 600,
+ggsave("Figure5b_sens_slopes_allModels_1y_3y_600dpi.tiff",
+       plot = p_sens_all, device = "tiff", compression = "lzw", dpi = 600,
        width = w_in, height = h_in, units = "in", bg = "white")
 
-}
+ggsave("Figure5b_sens_slopes_SlopeAdjusted_1y_3y.pdf",
+       plot = p_sens_1y3y_slopeadj, device = cairo_pdf, width = w_in, height = h_in, units = "in")
 
+ggsave("Figure5b_sens_slopes_SlopeAdjusted_1y_3y_600dpi.tiff",
+       plot = p_sens_1y3y_slopeadj, device = "tiff", compression = "lzw", dpi = 600,
+       width = w_in, height = h_in, units = "in", bg = "white")
+
+# ============================================================
+# 11) Objects to inspect
+# ============================================================
+df_plot_sens
+df_contrast_sens
+
+
+
+
+#本解析と感度分析でnon-recoveryの傾向が変わった原因検索####
 library(dplyr)
 library(purrr)
 library(forcats)
@@ -1103,4 +1092,501 @@ df_contrast <- bind_rows(
 # df_contrast <- df_contrast %>% mutate(across(c(diff, lower, upper, p_value), ~round(.x, 3)))
 
 df_contrast
+}
 
+
+#感度分析と本解析の違いを評価する####
+{
+# ============================================================
+# Compare (≤1 year) longitudinal-data structure between
+#   longdat (main) and longdat_sens (sensitivity)
+# Summarize 3 key points by group in ONE table:
+#   1) n_time_1y   : number of measurements within ≤1 year
+#   2) max_t_1y    : time-span coverage within ≤1 year (max years_from_time0)
+#   3) time0_source: where time0 came from (max_egfr_90_210 / nearest_0_90 / index_date)
+# ============================================================
+
+library(dplyr)
+library(tidyr)
+
+# ---- helper: derive time0 source from available columns ----
+# Assumes these columns exist in the dataset (they do in jin1_inclusion.csv):
+#   time0, max_egfr_date_210, nearest_date_90, index_date
+derive_time0_source <- function(df){
+  df %>%
+    mutate(
+      time0_source = case_when(
+        !is.na(max_egfr_date_210) & time0 == max_egfr_date_210 ~ "90–210 max eGFR date",
+        is.na(max_egfr_date_210) & !is.na(nearest_date_90) & time0 == nearest_date_90 ~ "0–90 nearest date",
+        (is.na(max_egfr_date_210) & is.na(nearest_date_90)) | time0 == index_date ~ "index date",
+        TRUE ~ "other/unknown"
+      )
+    )
+}
+
+# ---- core summarizer: returns group-level summaries within ≤1 year ----
+summ_3points_1y <- function(df, group_var, dataset_label){
+  
+  df2 <- df %>%
+    derive_time0_source() %>%
+    mutate(group = .data[[group_var]]) %>%
+    filter(!is.na(group)) %>%
+    filter(years_from_time0 >= 0, years_from_time0 <= 1)
+  
+  # patient-level (id-level) info within ≤1 year
+  id_level <- df2 %>%
+    group_by(id) %>%
+    summarise(
+      group       = first(group),
+      n_time_1y   = n_distinct(date),
+      max_t_1y    = max(years_from_time0, na.rm = TRUE),
+      time0_source = first(time0_source),
+      .groups = "drop"
+    )
+  
+  # group-level summaries (medians/IQR + time0_source distribution)
+  group_summary <- id_level %>%
+    group_by(group) %>%
+    summarise(
+      dataset = dataset_label,
+      n_id = n(),
+      n_time_median = median(n_time_1y, na.rm = TRUE),
+      n_time_p25    = quantile(n_time_1y, 0.25, na.rm = TRUE),
+      n_time_p75    = quantile(n_time_1y, 0.75, na.rm = TRUE),
+      max_t_median  = median(max_t_1y, na.rm = TRUE),
+      max_t_p25     = quantile(max_t_1y, 0.25, na.rm = TRUE),
+      max_t_p75     = quantile(max_t_1y, 0.75, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  time0_dist <- id_level %>%
+    count(group, time0_source, name = "n_id_time0") %>%
+    group_by(group) %>%
+    mutate(
+      dataset = dataset_label,
+      prop = n_id_time0 / sum(n_id_time0)
+    ) %>%
+    ungroup()
+  
+  # wide-format time0 distribution (proportions)
+  time0_wide <- time0_dist %>%
+    dplyr::select(dataset, group, time0_source, prop) %>%
+    pivot_wider(
+      names_from  = time0_source,
+      values_from = prop,
+      values_fill = 0
+    )
+  
+  # merge into ONE table
+  out <- group_summary %>%
+    left_join(time0_wide, by = c("dataset","group")) %>%
+    arrange(factor(group, levels = c("nonAKD","Recovery","Non-Recovery")))
+  
+  out
+}
+# ---- run for main and sensitivity, then bind in one table ----
+tbl_main_1y <- summ_3points_1y(longdat,      group_var = "jin_label",      dataset_label = "Main (longdat)")
+tbl_sens_1y <- summ_3points_1y(longdat_sens, group_var = "jin_label_sens", dataset_label = "Sensitivity (longdat_sens)")
+
+tbl_compare_1y <- bind_rows(tbl_main_1y, tbl_sens_1y) %>%
+  mutate(
+    # optional: pretty percentage columns (keep numeric too)
+    across(where(is.numeric), ~ .x)
+  )
+
+# ---- print / view ----
+print(tbl_compare_1y, n = Inf, width = Inf)
+
+# ---- (optional) more readable columns: show medians [p25, p75] ----
+library(dplyr)
+
+tbl_compare_1y_pretty <- tbl_compare_1y %>%
+  mutate(
+    n_time_IQR = paste0(n_time_median, " [", n_time_p25, ", ", n_time_p75, "]"),
+    max_t_IQR  = paste0(round(max_t_median, 3), " [", round(max_t_p25, 3), ", ", round(max_t_p75, 3), "]")
+  ) %>%
+  dplyr::select(
+    dataset, group, n_id,
+    n_time_IQR, max_t_IQR,
+    `90–210 max eGFR date`, `0–90 nearest date`
+  )
+
+print(tbl_compare_1y_pretty, n = Inf, width = Inf)
+} #結果出力
+{
+# ============================================================
+# Supplementary Table 3 (from tbl_compare_1y_pretty)
+# 1) Excel保存（論文用に“横持ち”の比較表：Main vs Sensitivity）
+# 2) 論文に載せられる形（Word: .docx）で保存（flextable + officer）
+#    ※openxlsx不要（writexl使用）
+# ============================================================
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# ---- 0) 前提：tbl_compare_1y_pretty が存在していること ----
+# tbl_compare_1y_pretty は以下の列を持つ想定：
+# dataset, group, n_id, n_time_IQR, max_t_IQR, `90–210 max eGFR date`, `0–90 nearest date`
+
+# ---- 1) “論文にそのまま貼れる”形式へ整形（Main と Sensitivity を横に並べる） ----
+tbl_supp3 <- tbl_compare_1y_pretty %>%
+  mutate(
+    dataset = recode(dataset,
+                     "Main (longdat)" = "Main",
+                     "Sensitivity (longdat_sens)" = "Sensitivity"),
+    group = as.character(group),
+    # 率は百分率表示も作る（元の数値は保持）
+    time0_90_210_pct = sprintf("%.0f%%", 100 * `90–210 max eGFR date`),
+    time0_0_90_pct   = sprintf("%.0f%%", 100 * `0–90 nearest date`)
+  ) %>%
+  dplyr::select(dataset, group, n_id, n_time_IQR, max_t_IQR,
+         time0_90_210_pct, time0_0_90_pct)
+
+# “Main列” “Sensitivity列” に分けるため、縦→横へ
+tbl_supp3_wide <- tbl_supp3 %>%
+  pivot_wider(
+    id_cols = group,
+    names_from = dataset,
+    values_from = c(n_id, n_time_IQR, max_t_IQR, time0_90_210_pct, time0_0_90_pct),
+    names_glue = "{.value}_{dataset}"
+  ) %>%
+  # 表示順を固定
+  mutate(group = factor(group, levels = c("nonAKD","Recovery","Non-Recovery"))) %>%
+  arrange(group) %>%
+  mutate(group = as.character(group)) %>%
+  # 列名を論文向けに整える
+  rename(
+    `Study group` = group,
+    
+    `n (Main)` = n_id_Main,
+    `n (Sensitivity)` = n_id_Sensitivity,
+    
+    `No. of eGFR measurements within ≤1 year, median [IQR] (Main)` = n_time_IQR_Main,
+    `No. of eGFR measurements within ≤1 year, median [IQR] (Sensitivity)` = n_time_IQR_Sensitivity,
+    
+    `Max follow-up from time0 within ≤1 year (years), median [IQR] (Main)` = max_t_IQR_Main,
+    `Max follow-up from time0 within ≤1 year (years), median [IQR] (Sensitivity)` = max_t_IQR_Sensitivity,
+    
+    `time0 source: 90–210 max eGFR date (Main)` = time0_90_210_pct_Main,
+    `time0 source: 90–210 max eGFR date (Sensitivity)` = time0_90_210_pct_Sensitivity,
+    
+    `time0 source: 0–90 nearest date (Main)` = time0_0_90_pct_Main,
+    `time0 source: 0–90 nearest date (Sensitivity)` = time0_0_90_pct_Sensitivity
+  )
+
+library(dplyr)
+library(tidyr)
+
+# =========================
+# A) まず「必要な列だけ」に整理
+# =========================
+tbl_long <- tbl_compare_1y_pretty %>%
+  mutate(
+    analysis = recode(dataset,
+                      "Main (longdat)" = "Main analysis",
+                      "Sensitivity (longdat_sens)" = "Sensitivity analysis"),
+    group = as.character(group),
+    
+    # 型を揃える（pivot_longer対策）
+    n_id = as.character(n_id),
+    `90–210 max eGFR date` = as.character(`90–210 max eGFR date`),
+    `0–90 nearest date`    = as.character(`0–90 nearest date`)
+  ) %>%
+  dplyr::select(
+    analysis, group,
+    n_id, n_time_IQR, max_t_IQR,
+    `90–210 max eGFR date`, `0–90 nearest date`
+  ) %>%
+  pivot_longer(
+    cols = c(n_id, n_time_IQR, max_t_IQR, `90–210 max eGFR date`, `0–90 nearest date`),
+    names_to = "Item",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Item = recode(
+      Item,
+      n_id = "n",
+      n_time_IQR = "No. of eGFR measurements ≤1 year, median [IQR]",
+      max_t_IQR = "Max follow-up from time0 (years), median [IQR]",
+      `90–210 max eGFR date` = "time0 = 90–210 days (%)",
+      `0–90 nearest date`    = "time0 = 0–90 days (%)"
+    ),
+    Value = ifelse(
+      grepl("^time0", Item),
+      paste0(round(as.numeric(Value) * 100), "%"),
+      as.character(Value)
+    )
+  )
+
+# =========================
+# B) “非Non-Recovery（nonAKD/Recovery）” は Main analysis の値だけ採用
+#    “Non-Recovery” は Main analysis と Sensitivity analysis の両方を残す
+# =========================
+tbl_long_compact <- bind_rows(
+  # nonAKD + Recovery：Main analysis のみ
+  tbl_long %>%
+    filter(group %in% c("nonAKD", "Recovery"), analysis == "Main analysis") %>%
+    mutate(col_id = group),
+  
+  # Non-Recovery：Main + Sensitivity を両方
+  tbl_long %>%
+    filter(group == "Non-Recovery") %>%
+    mutate(col_id = paste0("Non-Recovery_", analysis))
+)
+
+# =========================
+# C) 横持ち（転置）して完成
+# =========================
+tbl_transposed_compact <- tbl_long_compact %>%
+  dplyr::select(Item, col_id, Value) %>%
+  pivot_wider(names_from = col_id, values_from = Value) %>%
+  # 列順（見やすい順）を固定
+  dplyr::select(
+    Item,
+    nonAKD,
+    Recovery,
+    `Non-Recovery_Main analysis`,
+    `Non-Recovery_Sensitivity analysis`
+  )
+
+print(tbl_transposed_compact, n = Inf, width = Inf)
+
+library(officer)
+library(flextable)
+
+caption_txt <- paste0(
+  "Supplementary Table 3. Comparison of longitudinal eGFR data structure within ≤1 year "
+)
+
+ft <- flextable(tbl_transposed_compact) %>%
+  set_caption(caption_txt) %>%
+  bold(part = "header") %>%
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 10, part = "all") %>%
+  align(align = "center", part = "all") %>%
+  align(j = 1, align = "left", part = "all") %>%
+  valign(valign = "top", part = "all") %>%
+  autofit() %>%
+  border_remove() %>%
+  hline_top(border = fp_border(width = 1)) %>%
+  hline(border = fp_border(width = 0.6), part = "header") %>%
+  hline_bottom(border = fp_border(width = 1))
+
+doc <- read_docx() %>%
+  body_add_flextable(ft)
+
+print(doc, target = "Supplementary_Table3_transposed_compact.docx")
+
+#エクセル保存
+if (!requireNamespace("writexl", quietly = TRUE)) install.packages("writexl")
+writexl::write_xlsx(
+  list("Supplementary Table 3" = tbl_transposed_compact),
+  path = "Supplementary_Table3_transposed_compact.xlsx"
+)
+}
+# ============================================================
+# Compare longitudinal-data structure between:
+#   Primary analysis      : longdat
+#   Sensitivity analysis  : longdat_sens
+# Window: ≤1 year from time0
+# ============================================================
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(officer)
+  library(flextable)
+})
+
+# -----------------------------
+# 1) Helper: derive time0 source
+# -----------------------------
+derive_time0_source <- function(df){
+  df %>%
+    mutate(
+      time0_source = case_when(
+        !is.na(max_egfr_date_210) & time0 == max_egfr_date_210 ~ "90–210 max eGFR date",
+        is.na(max_egfr_date_210) & !is.na(nearest_date_90) & time0 == nearest_date_90 ~ "0–90 nearest date",
+        (is.na(max_egfr_date_210) & is.na(nearest_date_90)) | time0 == index_date ~ "index date",
+        TRUE ~ "other/unknown"
+      )
+    )
+}
+
+# -----------------------------
+# 2) Core summarizer (≤1 year)
+# -----------------------------
+summ_3points_1y <- function(df, group_var, analysis_label){
+  
+  df2 <- df %>%
+    derive_time0_source() %>%
+    mutate(group = .data[[group_var]]) %>%
+    filter(!is.na(group)) %>%
+    filter(years_from_time0 >= 0, years_from_time0 <= 1)
+  
+  id_level <- df2 %>%
+    group_by(id) %>%
+    summarise(
+      group        = first(group),
+      n_time_1y    = n_distinct(date),
+      max_t_1y     = max(years_from_time0, na.rm = TRUE),
+      time0_source = first(time0_source),
+      .groups = "drop"
+    )
+  
+  group_summary <- id_level %>%
+    group_by(group) %>%
+    summarise(
+      analysis = analysis_label,
+      n_id = n(),
+      n_time_median = median(n_time_1y, na.rm = TRUE),
+      n_time_p25    = as.numeric(quantile(n_time_1y, 0.25, na.rm = TRUE)),
+      n_time_p75    = as.numeric(quantile(n_time_1y, 0.75, na.rm = TRUE)),
+      max_t_median  = median(max_t_1y, na.rm = TRUE),
+      max_t_p25     = as.numeric(quantile(max_t_1y, 0.25, na.rm = TRUE)),
+      max_t_p75     = as.numeric(quantile(max_t_1y, 0.75, na.rm = TRUE)),
+      .groups = "drop"
+    )
+  
+  time0_dist <- id_level %>%
+    count(group, time0_source, name = "n_id_time0") %>%
+    group_by(group) %>%
+    mutate(
+      analysis = analysis_label,
+      prop = n_id_time0 / sum(n_id_time0)
+    ) %>%
+    ungroup()
+  
+  time0_wide <- time0_dist %>%
+    dplyr::select(analysis, group, time0_source, prop) %>%
+    pivot_wider(
+      names_from  = time0_source,
+      values_from = prop,
+      values_fill = 0
+    )
+  
+  out <- group_summary %>%
+    left_join(time0_wide, by = c("analysis","group")) %>%
+    arrange(factor(as.character(group),
+                   levels = c("nonAKD","Recovery","Non-Recovery")))
+  
+  out
+}
+
+# -----------------------------
+# 3) Run summaries
+# -----------------------------
+tbl_primary_1y <- summ_3points_1y(
+  longdat, "jin_label", "Primary analysis"
+)
+tbl_sens_1y <- summ_3points_1y(
+  longdat_sens, "jin_label_sens", "Sensitivity analysis"
+)
+
+tbl_compare_1y <- bind_rows(tbl_primary_1y, tbl_sens_1y)
+
+tbl_compare_1y_pretty <- tbl_compare_1y %>%
+  mutate(
+    n_time_IQR = paste0(n_time_median, " [", n_time_p25, ", ", n_time_p75, "]"),
+    max_t_IQR  = paste0(round(max_t_median, 3),
+                        " [", round(max_t_p25, 3),
+                        ", ", round(max_t_p75, 3), "]")
+  ) %>%
+  dplyr::select(
+    analysis, group, n_id,
+    n_time_IQR, max_t_IQR,
+    `90–210 max eGFR date`, `0–90 nearest date`
+  )
+
+# -----------------------------
+# 4) Build compact Supplementary Table 3
+# -----------------------------
+tbl_long <- tbl_compare_1y_pretty %>%
+  mutate(
+    group = as.character(group),
+    n_id  = as.character(n_id),
+    `90–210 max eGFR date` = as.character(`90–210 max eGFR date`),
+    `0–90 nearest date`   = as.character(`0–90 nearest date`)
+  ) %>%
+  dplyr::select(
+    analysis, group,
+    n_id, n_time_IQR, max_t_IQR,
+    `90–210 max eGFR date`, `0–90 nearest date`
+  ) %>%
+  pivot_longer(
+    cols = c(n_id, n_time_IQR, max_t_IQR,
+             `90–210 max eGFR date`, `0–90 nearest date`),
+    names_to = "Item",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Item = recode(
+      Item,
+      n_id = "n",
+      n_time_IQR = "No. of eGFR measurements ≤1 year, median [IQR]",
+      max_t_IQR  = "Max follow-up from time0 (years), median [IQR]",
+      `90–210 max eGFR date` = "time0 = 90–210 days (%)",
+      `0–90 nearest date`   = "time0 = 0–90 days (%)"
+    ),
+    Value = ifelse(
+      grepl("^time0", Item),
+      paste0(round(as.numeric(Value) * 100), "%"),
+      as.character(Value)
+    )
+  )
+
+tbl_long_compact <- bind_rows(
+  tbl_long %>%
+    filter(group %in% c("nonAKD","Recovery"),
+           analysis == "Primary analysis") %>%
+    mutate(col_id = group),
+  
+  tbl_long %>%
+    filter(group == "Non-Recovery") %>%
+    mutate(col_id = paste0("Non-Recovery_", analysis))
+)
+
+tbl_transposed_compact <- tbl_long_compact %>%
+  dplyr::select(Item, col_id, Value) %>%
+  pivot_wider(names_from = col_id, values_from = Value) %>%
+  dplyr::select(
+    Item,
+    nonAKD,
+    Recovery,
+    `Non-Recovery_Primary analysis`,
+    `Non-Recovery_Sensitivity analysis`
+  )
+
+# -----------------------------
+# 5) Save Word + Excel
+# -----------------------------
+caption_txt <- paste0(
+  "Supplementary Table 3. Comparison of longitudinal eGFR data structure within ≤1 year. "
+)
+
+ft <- flextable(tbl_transposed_compact) %>%
+  set_caption(caption_txt) %>%
+  bold(part = "header") %>%
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 10, part = "all") %>%
+  align(align = "center", part = "all") %>%
+  align(j = 1, align = "left", part = "all") %>%
+  valign(valign = "top", part = "all") %>%
+  autofit() %>%
+  border_remove() %>%
+  hline_top(border = fp_border(width = 1)) %>%
+  hline(border = fp_border(width = 0.6), part = "header") %>%
+  hline_bottom(border = fp_border(width = 1))
+
+doc <- read_docx() %>%
+  body_add_flextable(ft)
+
+print(doc, target = "Supplementary_Table3_PrimarySensitivity.docx")
+
+if (!requireNamespace("writexl", quietly = TRUE)) install.packages("writexl")
+writexl::write_xlsx(
+  list("Supplementary Table 3" = tbl_transposed_compact),
+  path = "Supplementary_Table3_PrimarySensitivity.xlsx"
+)

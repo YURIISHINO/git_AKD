@@ -1,4 +1,4 @@
-setwd("E:/R")
+setwd("X:/R")
 library(readr)
 library(dplyr)
 jin1_index_cre_egfr_3 <- read_csv("jin1_index_cre_egfr_3.csv", locale = locale(encoding = "SHIFT-JIS"))
@@ -100,10 +100,10 @@ jin1_AKD_mod <- jin1_AKD_with_details %>%
 View(jin1_AKD_with_details)
 View(jin1_AKD_mod)
 
-setwd("E:/R")
+setwd("X:/R")
 write.csv(jin1_AKD_mod, file = "jin1_AKD_mod.csv", row.names = FALSE)
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_AKD_mod <- read_csv("jin1_AKD_mod.csv", locale = locale(encoding = "SHIFT-JIS"))
 
 #集計
@@ -123,7 +123,7 @@ write.csv(id_under60, "E:/R/id_under60.csv", row.names = FALSE)
 
 #statusまとめ####
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_AKI <- read_csv("jin1_AKI.csv", locale = locale(encoding = "SHIFT-JIS"))
 jin1_AKD_mod <- read_csv("jin1_AKD_mod.csv", locale = locale(encoding = "SHIFT-JIS"))
 jin1_CKD_all <- read_csv("jin1_CKD_all.csv", locale = locale(encoding = "SHIFT-JIS"))
@@ -158,11 +158,11 @@ jin1_status %>%
   summarise(n_id = n_distinct(id)) %>%
   arrange(desc(n_id))
 
-setwd("E:/R")
+setwd("X:/R")
 write.csv(jin1_status, file = "jin1_status.csv", row.names = FALSE)
 
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_status <- read_csv("jin1_status.csv", locale = locale(encoding = "SHIFT-JIS"))
 jin1_status %>%
   group_by(AKD_status) %>%
@@ -171,7 +171,7 @@ jin1_status %>%
 
 #recovery#####
 library(dplyr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_status <- read_csv("jin1_status.csv", locale = locale(encoding = "SHIFT-JIS"))
 #AKDの行だけ抜き出し
 jin1_status_AKD <- jin1_status %>%
@@ -250,7 +250,7 @@ jin1_status_AKD_recovery <- jin1_status_AKD_recovery %>%
   ungroup() %>%
   dplyr::select(-has_90_150, -recovery_flag_90)
 View(jin1_status_AKD_recovery)}##90~150日データで
-setwd("E:/R")
+setwd("X:/R")
 write.csv(jin1_status_AKD_recovery, file = "jin1_status_AKD_recovery.csv", row.names = FALSE)
 jin1_status_AKD_recovery %>%
   group_by(`150_210recovery`, `90_150recovery`) %>%
@@ -260,7 +260,7 @@ jin1_status_AKD_recovery %>%
 library(dplyr)
 library(lubridate)
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_status_AKD_recovery <- read_csv("jin1_status_AKD_recovery.csv", locale = locale(encoding = "SHIFT-JIS"))
 jin1_med <- read_csv("jin1_med.csv", locale = locale(encoding = "SHIFT-JIS"))
 dn_complete　<- read_csv("dn_complete.csv", locale = locale(encoding = "SHIFT-JIS"))
@@ -559,10 +559,10 @@ jin1_Eligibile_removed %>%
 
 
 ####jin1_EligibileをCSVファイルに書き出し####
-setwd("E:/R")
+setwd("X:/R")
 write.csv(jin1_Eligibile_removed, file = "jin1_Eligibile.csv", row.names = FALSE)
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 
 jin1_Eligibile %>%

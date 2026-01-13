@@ -1,9 +1,9 @@
 #必要な情報をすべて含有するcsvファイル(jin1_Eligible? primay_ESKDやdeath情報や感度分析に必要な情報などすべて含有)を作成し、適当なdfを作成
 View(jin1_Eligibile)
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-
+colnames(jin1_Eligibile)
 #アウトカム解析に必要なcodeのみ####
 #jin1_Eligibileから一意のidだけ抽出
 jin1_Eligibile_unique_id <- jin1_Eligibile %>%
@@ -58,12 +58,19 @@ p_death <- ggsurvplot(
   legend.title = "Group"
 )
 
+#死亡者人数を集計
+library(dplyr)
 
-colnames(jin1_Eligibile)
+jin1_Eligibile_death %>%
+  group_by(jin_label) %>%
+  summarise(
+    n_primary_death = sum(primary_death == 1, na.rm = TRUE)
+  )
+
 
 ##論文用の図（デーブル付き）####
 # 2カラム用の例：幅 180 mm ≒ 7.1 inch
-setwd("E:/R")
+setwd("X:/R")
 tiff(
   filename = "Figure2_death_KM.tiff",
   width    = 7.1,   # inch
@@ -379,7 +386,7 @@ summary(
     ncol    = 1,
     heights = c(1, 2)   # テーブル：図 = 1:2 の高さ
   )
-  setwd("E:/R")  
+  setwd("X:/R")  
   # ---- 5) 一枚の図としてTIFF保存（横切れ対策で width 少し広め）----
   CairoTIFF(
     filename = "Figure3_forest_with_table_death_akd_3groups.tif",
@@ -514,6 +521,7 @@ jin1_Eligibile_sens <- jin1_Eligibile_unique_id %>%
       jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
       TRUE ~ NA_character_
     ),
+    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
     group = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery")), 
     time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
   ) %>%
@@ -544,7 +552,7 @@ p_death_sens <- ggsurvplot(
   legend.labs   = c("nonAKD", "Recovery", "Non-Recovery")  # 必要に応じて
 )
 # 必要なら作業ディレクトリを指定
-setwd("E:/R")
+setwd("X:/R")
 tiff(
   filename   = "Figure5a_death_KM_sensitivity.tiff",
   width      = 7.1,   # inch（約180 mm）
@@ -558,3 +566,171 @@ tiff(
 print(p_death_sens)      # カーブ + リスクテーブルをまとめて出力
 
 dev.off()
+
+#cox比例ハザード###
+library(survival)
+library(dplyr)
+library(broom)
+
+# 参照群を nonAKD に設定
+jin1_Eligibile_sens <- jin1_Eligibile_sens %>%
+  mutate(group = relevel(group, ref = "nonAKD"))
+
+# 本解析と同一の共変量セット
+cox_model_3group_sens <- coxph(
+  Surv(time_years, primary_death) ~
+    group + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
+    CKD_status,   # ref = nonCKD
+  data = jin1_Eligibile_sens
+)
+
+summary(cox_model_3group_sens)
+
+anova(cox_model_3group_sens, test = "LRT")
+
+ph_test <- cox.zph(cox_model_3group_sens)
+print(ph_test)
+
+#AKD群を比較する
+jin1_Eligibile_sens2 <- jin1_Eligibile_sens %>%
+  mutate(group = relevel(group, ref = "Recovery"))
+
+cox_model_recovery_ref <- coxph(
+  Surv(time_years, primary_death) ~
+    group + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 +
+    dn10 + dn12 + dn12 + dn13 + dn14 + dn15 +
+    CKD_status,
+  data = jin1_Eligibile_sens2
+)
+
+summary(cox_model_recovery_ref)
+
+
+##併存疾患表の作成#####
+# ============================================
+# Supplementary Table 1
+# 元Excelの順序を保持したまま term を collapse
+# → Word（docx）に論文掲載体裁で出力
+# ============================================
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(flextable)
+library(officer)
+library(openxlsx)
+
+# ---- 1) read ----
+file <- "Supplementary_Table_1_combined.xlsx"
+
+dat <- readxl::read_xlsx(file, sheet = "Supplementary_Table_1") %>%
+  rename(
+    term = `Drug class or comorbidity`,
+    definition = `Definitions (generic drug names or ICD-10 codes)`
+  ) %>%
+  mutate(
+    term = str_squish(term),
+    definition = str_squish(definition),
+    row_id = row_number()   # ★ 元Excelでの出現順を保存
+  ) %>%
+  filter(!is.na(term), !is.na(definition), term != "", definition != "") %>%
+  filter(!(term %in% c("—","-","--") & definition %in% c("—","-","--")))
+
+# ---- 2) termごとにまとめる（最初に出た順序を保持） ----
+dat_collapsed <- dat %>%
+  group_by(term) %>%
+  summarise(
+    definition = paste(unique(definition), collapse = "; "),
+    first_row  = min(row_id),     # ★ 最初に出た位置
+    .groups = "drop"
+  ) %>%
+  arrange(first_row) %>%          # ★ 元Excel順に並び替え
+  mutate(
+    definition = stringr::str_replace_all(definition, ";\\s*", ";\n"),
+    definition = stringr::str_replace_all(definition, ",\\s*", ", ")
+  ) %>%   
+  dplyr::select(term, definition)
+ 
+
+
+# ---- 3) flextable（論文掲載体裁） ----
+caption_txt <- "Supplementary Table 1. Definitions of medications and comorbidities"
+
+ft <- flextable(dat_collapsed) %>%
+  set_caption(caption_txt) %>%
+  set_header_labels(
+    term = "Drug class or comorbidity",
+    definition = "Definitions (generic drug names or ICD-10 codes)"
+  ) %>%
+  bold(part = "header") %>%
+  align(align = "left", part = "all") %>%
+  valign(valign = "top", part = "all") %>%
+  fontsize(size = 10, part = "all") %>%
+  font(fontname = "Times New Roman", part = "all") %>%
+  width(j = "term", width = 2.3) %>%
+  width(j = "definition", width = 5.0) %>%
+  border_remove() %>%
+  hline_top(border = fp_border(width = 1)) %>%
+  hline(border = fp_border(width = 0.6), part = "header") %>%
+  hline_bottom(border = fp_border(width = 1)) %>%
+  autofit() %>%
+# ---- 罫線設定 ----
+border_remove() %>%
+  
+  # 表の一番上（太線）
+  hline_top(border = fp_border(width = 1)) %>%
+  
+  # ヘッダ下（中太線）
+  hline(border = fp_border(width = 0.8), part = "header") %>%
+  
+  # ★ term（各行）の下に細い罫線を引く
+  hline(
+    i = seq_len(nrow(dat_collapsed)),
+    border = fp_border(width = 0.4),
+    part = "body"
+  ) %>%
+  
+  # 表の一番下（太線）
+  hline_bottom(border = fp_border(width = 1))
+# ft を作ったあとに追加する（重要）
+ft <- ft %>%
+  autofit() %>%
+  flextable::set_table_properties(
+    layout = "autofit",
+    width  = 1        # ← Wordページ幅に強制フィット
+  ) %>%
+  flextable::valign(valign = "top", part = "all")
+
+
+# ---- 4) Wordに出力 ----
+doc <- read_docx()
+doc <- body_add_flextable(doc, value = ft)
+print(doc, target = "Supplementary_Table_1_collapsed.docx")
+
+# ---- 5) 掲載用Excelも保存 ----
+openxlsx::write.xlsx(
+  dat_collapsed,
+  "Supplementary_Table_1_collapsed.xlsx"
+)
+
+# ---- 6) Viewer確認 ----
+ft
+
+
+
+# 本解析Recovery ID
+id_main_rec <- jin1_Eligibile_death %>%
+  filter(jin_label == "nonAKD") %>%
+  pull(id) %>% unique()
+
+# 感度分析Recovery ID
+id_sens_rec <- jin1_Eligibile_sens %>%
+  filter(group == "nonAKD") %>%
+  pull(id) %>% unique()
+
+# 差分確認
+setdiff(id_main_rec, id_sens_rec)   # 本解析にいて感度にいない
+setdiff(id_sens_rec, id_main_rec)   # 感度にいて本解析にいない
+length(id_main_rec); length(id_sens_rec)

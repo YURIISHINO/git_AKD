@@ -10,7 +10,7 @@ library(dplyr)
 
 # 読み込み設定
 loc <- locale(encoding = "SHIFT-JIS")
-setwd("E:/R")
+setwd("X:/R")
 # 必要な列だけ読み込み（.default = "c" は他列を文字列扱いにして後で選択）
 cre_2012 <- read_csv("jin/cre_over18/cre_2012_over18.csv",
                      locale = loc, skip = 3,
@@ -39,7 +39,7 @@ cre_2012_2013_sub <- cre_2012_2013 %>%
   )
 cre_2012_2013_sub
 library(readr)
-setwd("E:/R")
+setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 #判定期間にデータがないものを除外#####
 jin1_Eligibile_include_code <- jin1_Eligibile %>%
