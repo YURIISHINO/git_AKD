@@ -9,6 +9,7 @@ library(grid)
 # CSVファイルをtibbleとして読み込む_藤倉用
 setwd("X:/R")
 jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
+jin1_Eligibile_cox_3group <- read_csv("jin1_Eligibile_cox_3group.csv", locale = locale(encoding = "SHIFT-JIS"))
 colnames(jin1_Eligibile)
 # 1人1行（index_date当日レコードのみ・最初のindex_dateを採用）
 jin1_Eligibile_unique_sub <- jin1_Eligibile %>%
@@ -101,149 +102,149 @@ summary(cox_interaction)
 
 # --- サブグループ・フォレスト ---
 {
-# 並び順を明示（上：CKDあり → 下：CKDなし）
-plot_df <- tbl_ckd %>%
-  mutate(
-    Comparison = factor(Comparison,
-                        levels = c("Recovery vs nonAKD","Non-Recovery vs nonAKD")),
-    Subgroup   = factor(Subgroup, levels = c("CKD: yes","CKD: no"))
-  )
-
-# CKDありの2本（Recovery/Non-Recovery）を上段、
-# CKDなしの2本を下段に配置
-ggplot(plot_df,
-       aes(x = HR, y = Comparison, xmin = CI_low, xmax = CI_high)) +
-  geom_point(size = 3) +
-  geom_errorbarh(height = 0.18) +
-  geom_vline(xintercept = 1, linetype = "dashed") +
-  scale_x_log10() +
-  facet_grid(rows = vars(Subgroup), switch = "y") +  # ← ここで上下に分ける
-  labs(
-    title = "Death (Subgroup Cox): AKD groups within CKD strata",
-    x = "Hazard Ratio (log scale)", y = NULL
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    strip.placement = "outside",
-    strip.text.y.left = element_text(angle = 0, face = "bold") # 見出しを左に
-  )
-
-fit_total <- coxph(cox_formula_sub, data = dat)  
-# 基準群（nonAKD）行を追加してデータを再構築
-total_header <- tibble(
-  Subgroup = "Total", 
-  Comparison = "", 
-  HR = NA_real_, 
-  CI_low = NA_real_, 
-  CI_high = NA_real_, 
-  p = NA_real_
-)
-
-total_data <- bind_rows(
-  tibble(Subgroup = " ", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
-  tidy_sub(fit_total, "Total") %>%
-    mutate(Subgroup = " ")
-)
-
-ckd_header <- tibble(
-  Subgroup = "CKD", 
-  Comparison = "", 
-  HR = NA_real_, 
-  CI_low = NA_real_, 
-  CI_high = NA_real_, 
-  p = NA_real_
-)
-
-# CKD yesグループ
-ckd1_data <- bind_rows(
-  tibble(Subgroup = "  yes", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
-  tidy_sub(fit_ckd1, "CKD: yes") %>%
-    mutate(Subgroup = case_when(
-      row_number() == 0 ~ "  yes",  # 最初の行のみ"yes"
-      TRUE ~ "  "                   # 2行目以降は空白
-    ))
-)
-
-# CKD noグループ
-ckd0_data <- bind_rows(
-  tibble(Subgroup = "  no", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
-  tidy_sub(fit_ckd0, "CKD: no") %>%
-    mutate(Subgroup = case_when(
-      row_number() == 0 ~ "  no",   # 最初の行のみ"no"
-      TRUE ~ "  "                   # 2行目以降は空白
-    ))
-)
-
-# データを結合
-tbl_total <- bind_rows(
-  total_header,
-  total_data,
-  ckd_header, 
-  ckd1_data,
-  ckd0_data
-) %>%
-  mutate(
-    Comparison = case_when(
-      Comparison == "" ~ "",
-      Comparison == "Recovery vs nonAKD" ~ "Recovery",
-      Comparison == "Non-Recovery vs nonAKD" ~ "Non-Recovery",
-      Comparison == "nonAKD" ~ "nonAKD",
-      TRUE ~ Comparison
-    ),
-    is_header = Subgroup %in% c("Total", "CKD"),
-    is_reference = Comparison == "nonAKD"
-  )
-# プロット用データフレームの作成
-plot_df_forest <- tbl_total %>%
-  mutate(
-    HR_with_CI = case_when(
-      is_header ~ "",  # ヘッダー行は空白
-      is_reference ~ "Reference",
-      is.na(HR) ~ "",
-      TRUE ~ paste0(
-        sprintf("%.2f", HR), " (",
-        sprintf("%.2f", CI_low), "–", sprintf("%.2f", CI_high), ")"
-      )
-    ),
-    P_value = case_when(
-      is_header ~ "",  # ヘッダー行は空白
-      is_reference ~ "-",
-      is.na(p) ~ "",
-      p < 0.001 ~ "<0.001",
-      p < 0.01  ~ formatC(p, format = "fg", digits = 1),
-      TRUE      ~ formatC(p, format = "fg", digits = 2)
+  # 並び順を明示（上：CKDあり → 下：CKDなし）
+  plot_df <- tbl_ckd %>%
+    mutate(
+      Comparison = factor(Comparison,
+                          levels = c("Recovery vs nonAKD","Non-Recovery vs nonAKD")),
+      Subgroup   = factor(Subgroup, levels = c("CKD: yes","CKD: no"))
     )
+  
+  # CKDありの2本（Recovery/Non-Recovery）を上段、
+  # CKDなしの2本を下段に配置
+  ggplot(plot_df,
+         aes(x = HR, y = Comparison, xmin = CI_low, xmax = CI_high)) +
+    geom_point(size = 3) +
+    geom_errorbarh(height = 0.18) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    scale_x_log10() +
+    facet_grid(rows = vars(Subgroup), switch = "y") +  # ← ここで上下に分ける
+    labs(
+      title = "Death (Subgroup Cox): AKD groups within CKD strata",
+      x = "Hazard Ratio (log scale)", y = NULL
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      strip.placement = "outside",
+      strip.text.y.left = element_text(angle = 0, face = "bold") # 見出しを左に
+    )
+  
+  fit_total <- coxph(cox_formula_sub, data = dat)  
+  # 基準群（nonAKD）行を追加してデータを再構築
+  total_header <- tibble(
+    Subgroup = "Total", 
+    Comparison = "", 
+    HR = NA_real_, 
+    CI_low = NA_real_, 
+    CI_high = NA_real_, 
+    p = NA_real_
+  )
+  
+  total_data <- bind_rows(
+    tibble(Subgroup = " ", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
+    tidy_sub(fit_total, "Total") %>%
+      mutate(Subgroup = " ")
+  )
+  
+  ckd_header <- tibble(
+    Subgroup = "CKD", 
+    Comparison = "", 
+    HR = NA_real_, 
+    CI_low = NA_real_, 
+    CI_high = NA_real_, 
+    p = NA_real_
+  )
+  
+  # CKD yesグループ
+  ckd1_data <- bind_rows(
+    tibble(Subgroup = "  yes", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
+    tidy_sub(fit_ckd1, "CKD: yes") %>%
+      mutate(Subgroup = case_when(
+        row_number() == 0 ~ "  yes",  # 最初の行のみ"yes"
+        TRUE ~ "  "                   # 2行目以降は空白
+      ))
+  )
+  
+  # CKD noグループ
+  ckd0_data <- bind_rows(
+    tibble(Subgroup = "  no", Comparison = "nonAKD", HR = 1, CI_low = 1, CI_high = 1, p = NA_real_),
+    tidy_sub(fit_ckd0, "CKD: no") %>%
+      mutate(Subgroup = case_when(
+        row_number() == 0 ~ "  no",   # 最初の行のみ"no"
+        TRUE ~ "  "                   # 2行目以降は空白
+      ))
+  )
+  
+  # データを結合
+  tbl_total <- bind_rows(
+    total_header,
+    total_data,
+    ckd_header, 
+    ckd1_data,
+    ckd0_data
   ) %>%
-  select(Subgroup, Comparison, HR_with_CI, P_value)
-
-plot_df_forest$hazard <- paste(rep(" ", 20), collapse = " ")
-plot_df_forest <- plot_df_forest %>%
-  select('Subgroup', 'Comparison', 'hazard', 'HR_with_CI', 'P_value')
-colnames(plot_df_forest) <- c("Subgroup", "Comparison", " ", "Hazard Ratio (95% CI)", "P-value")
-
-
-# フォレストプロット作成
-forest_plot <- forestploter::forest(
-  data = plot_df_forest,
-  est = ifelse(tbl_total_formatted$is_header, NA, tbl_total_formatted$HR),  # ヘッダー行はNA
-  lower = ifelse(tbl_total_formatted$is_reference | tbl_total_formatted$is_header, 
-                 ifelse(tbl_total_formatted$is_header, NA, tbl_total_formatted$HR), 
-                 tbl_total_formatted$CI_low),
-  upper = ifelse(tbl_total_formatted$is_reference | tbl_total_formatted$is_header, 
-                 ifelse(tbl_total_formatted$is_header, NA, tbl_total_formatted$HR), 
-                 tbl_total_formatted$CI_high),
-  sizes = ifelse(tbl_total_formatted$is_header, 0.1, 0.6),
-  ci_column = 3,
-  is_summary = tbl_total_formatted$is_header,
-  ref_line = 1,
-  x_trans = "log",
-  xlim = c(0.5, 10),
-  ticks_at = c(0.5, 1, 2, 4, 8),
-  arrow_lab = c("Lower", "Higher")
-)
-# 適宜行間を調整する
-convertHeight(forest_plot$heights, "mm", valueOnly = TRUE) 
-forest_plot$heights <- rep(unit(8, "mm"), nrow(forest_plot))
+    mutate(
+      Comparison = case_when(
+        Comparison == "" ~ "",
+        Comparison == "Recovery vs nonAKD" ~ "Recovery",
+        Comparison == "Non-Recovery vs nonAKD" ~ "Non-Recovery",
+        Comparison == "nonAKD" ~ "nonAKD",
+        TRUE ~ Comparison
+      ),
+      is_header = Subgroup %in% c("Total", "CKD"),
+      is_reference = Comparison == "nonAKD"
+    )
+  # プロット用データフレームの作成
+  plot_df_forest <- tbl_total %>%
+    mutate(
+      HR_with_CI = case_when(
+        is_header ~ "",  # ヘッダー行は空白
+        is_reference ~ "Reference",
+        is.na(HR) ~ "",
+        TRUE ~ paste0(
+          sprintf("%.2f", HR), " (",
+          sprintf("%.2f", CI_low), "–", sprintf("%.2f", CI_high), ")"
+        )
+      ),
+      P_value = case_when(
+        is_header ~ "",  # ヘッダー行は空白
+        is_reference ~ "-",
+        is.na(p) ~ "",
+        p < 0.001 ~ "<0.001",
+        p < 0.01  ~ formatC(p, format = "fg", digits = 1),
+        TRUE      ~ formatC(p, format = "fg", digits = 2)
+      )
+    ) %>%
+    dplyr::select(Subgroup, Comparison, HR_with_CI, P_value)
+  
+  plot_df_forest$hazard <- paste(rep(" ", 20), collapse = " ")
+  plot_df_forest <- plot_df_forest %>%
+    dplyr::select('Subgroup', 'Comparison', 'hazard', 'HR_with_CI', 'P_value')
+  colnames(plot_df_forest) <- c("Subgroup", "Comparison", " ", "Hazard Ratio (95% CI)", "P-value")
+  
+  
+  # フォレストプロット作成
+  forest_plot <- forestploter::forest(
+    data = plot_df_forest,
+    est = ifelse(tbl_total$is_header, NA, tbl_total$HR),  # ヘッダー行はNA
+    lower = ifelse(tbl_total$is_reference | tbl_total$is_header, 
+                   ifelse( tbl_total$is_header, NA, tbl_total$HR), 
+                   tbl_total$CI_low),
+    upper = ifelse(tbl_total$is_reference | tbl_total$is_header, 
+                   ifelse(tbl_total$is_header, NA, tbl_total$HR), 
+                   tbl_total$CI_high),
+    sizes = ifelse(tbl_total$is_header, 0.1, 0.6),
+    ci_column = 3,
+    is_summary = tbl_total$is_header,
+    ref_line = 1,
+    x_trans = "log",
+    xlim = c(0.5, 10),
+    ticks_at = c(0.5, 1, 2, 4, 8),
+    arrow_lab = c("Lower", "Higher")
+  )
+  # 適宜行間を調整する
+  convertHeight(forest_plot$heights, "mm", valueOnly = TRUE) 
+  forest_plot$heights <- rep(unit(8, "mm"), nrow(forest_plot))
 }
 
 # 交互作用なしのベースモデル
@@ -346,12 +347,12 @@ write.xlsx(hr_int,
            rowNames = FALSE)
 library(knitr)
 install.packages("kableExtra")
-library(kableExtra)
 hr_int %>%
   kable("html",
         caption = "Supplementary Table 1. Adjusted Hazard Ratios by CKD Status (Interaction Model)") %>%
   kable_styling(full_width = FALSE)
 
+.libPaths()
 
 
 ##fit_ckd1のcoxを走らせるとモデル不安定のアラートが出現するので下記対応がお勧めと、geminiの回答
@@ -370,8 +371,8 @@ hr_int %>%
 
 # Step 1: Overall解析用のCoxモデル（recvsnon_recvsAKD.Rのモデルを再現）
 library(readr)
-jin1_Eligibile <- read_csv("/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-
+setwd("X:/R")
+jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
 # Overall用データ作成（recvsnon_recvsAKD.Rと同じロジック）
 jin1_Eligibile_cox_overall <- jin1_Eligibile %>%
   filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
@@ -448,7 +449,7 @@ stats_ckd <- calculate_summary_stats(dat, "ckd_bin")
 # Step 3: HR・CI・P値抽出関数
 extract_hr_ci_p <- function(fit, ref_level = "nonAKD") {
   tidy_res <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
-
+  
   # jin_label関連の係数のみ抽出
   hr_data <- tidy_res %>%
     filter(grepl("^jin_label", term)) %>%
@@ -464,7 +465,7 @@ extract_hr_ci_p <- function(fit, ref_level = "nonAKD") {
       P_value = p.value
     ) %>%
     select(Group, HR, CI_low, CI_high, P_value)
-
+  
   # nonAKDのReference行を追加
   bind_rows(
     tibble(Group = ref_level, HR = 1, CI_low = 1, CI_high = 1, P_value = NA_real_),
@@ -522,18 +523,18 @@ forest_data_full <- bind_rows(
       Subgroup == "CKD yes" & Group == "Recovery" ~ "  yes",
       TRUE ~ ""
     ),
-
+    
     # 患者数と死亡数の列（右揃え用にスペース追加は後で）
     `Number` = as.character(Number),
     `No. of death (%)` = paste0(Deaths, " (", Death_pct, ")"),
-
+    
     # HR (95%CI)の列
     `HR (95%CI)` = if_else(
       Group == "nonAKD",
       "Reference",
       sprintf("%.2f (%.2f–%.2f)", HR, CI_low, CI_high)
     ),
-
+    
     # P値の列（有意水準で表記）
     `P-value` = case_when(
       Group == "nonAKD" ~ "",
@@ -594,7 +595,7 @@ forest_plot_combined$heights <- rep(unit(8, "mm"), nrow(forest_plot_combined))
 plot(forest_plot_combined)
 
 # Step 6: 論文用保存（TIFF 600dpi）
-setwd("E:/R")
+setwd("X:/R")
 
 # TIFFで保存（余白を最小化）
 tiff(

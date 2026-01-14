@@ -250,6 +250,13 @@ jin1_Eligibile_cox_3group %>%
   group_by(jin_label) %>%
   summarise(n_unique_ids = n_distinct(id), .groups = "drop")
 
+
+# CSV保存
+library(readr)
+write_csv(
+  jin1_Eligibile_cox_3group,
+  "jin1_Eligibile_cox_3group.csv"   # 保存ファイル名（作業ディレクトリに保存されます）
+) 
 # -------------------------------
 # 2) Cox比例ハザード（3群）— CKD_statusは「CKD vs nonCKD」で推定
 # -------------------------------

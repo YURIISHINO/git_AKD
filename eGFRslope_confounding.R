@@ -1,5 +1,6 @@
 {
-{#eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
+{
+#eGFR・線形混合効果モデルを走らせる、また解析に必要なcodeのみ####
 library(nlme)
 library(dplyr)
 library(ggplot2)
@@ -92,7 +93,7 @@ write_csv(
   "jin1_inclusion.csv"   # 保存ファイル名（作業ディレクトリに保存されます）
 ) 
 }
-
+{
 library(dplyr)
 library(readr)
 library(nlme)
