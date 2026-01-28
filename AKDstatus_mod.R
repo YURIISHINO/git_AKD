@@ -587,4 +587,96 @@ AKD_status_count_id <- jin1_Eligibile_under60 %>%
   arrange(jin_status)
 AKD_status_count_id
 
-
+{#eGFR・線形混合効果モチE��を走らせる、また解析に忁E��なcodeのみ####
+  library(nlme)
+  library(dplyr)
+  library(ggplot2)
+  # ① jin_label の定義と忁E���Eの抽出
+  jin1_inclusion <- jin1_Eligibile %>%
+    filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+    mutate(
+      jin_label = case_when(
+        jin_status == "nonAKD" ~ "nonAKD",
+        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      ),
+      jin_label = factor(jin_label, levels = c("nonAKD","Recovery","Non-Recovery"))
+    ) #%>%
+  #dplyr::select(id, date, index_date, egfr, jin_status, jin_label)
+  
+  jin1_inclusion %>%
+    group_by(jin_status, jin_label) %>%
+    summarise(
+      unique_ids = n_distinct(id),
+      .groups = "drop"
+    )
+  
+  jin1_inclusion %>%
+    filter(!is.na(jin_label)) %>%
+    group_by(jin_label) %>%
+    summarise(unique_ids = n_distinct(id)) %>%
+    arrange(desc(unique_ids))
+  
+  # ② 90�E�E10日の最大egfr日�E�Eax_egfr_date_210�E�抽出
+  egfr_max_date_210 <- jin1_inclusion %>%
+    mutate(days_from_index = as.numeric(date - index_date)) %>%
+    filter(days_from_index >= 90, days_from_index <= 210) %>%
+    group_by(id) %>%
+    filter(egfr == max(egfr, na.rm = TRUE)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    dplyr::select(id, max_egfr_date_210 = date)
+  
+  # ③ 0�E�E0日の最新日�E�Eearest_date_90�E�抽出
+  max_date_90 <- jin1_inclusion %>%
+    mutate(days_from_index = as.numeric(date - index_date)) %>%
+    filter(days_from_index >= 0, days_from_index <= 90) %>%
+    group_by(id) %>%
+    filter(days_from_index == max(days_from_index, na.rm = TRUE)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    dplyr::select(id, nearest_date_90 = date)
+  
+  # ④ 允E��ータに結合
+  jin1_inclusion <- jin1_inclusion %>%
+    left_join(egfr_max_date_210, by = "id") %>%
+    left_join(max_date_90, by = "id")
+  
+  # ⑤ time0 の定義�E�優先度�E�max_egfr_date_210 > nearest_date_90 > index_date�E�E
+  jin1_inclusion <- jin1_inclusion %>%
+    mutate(time0 = case_when(
+      !is.na(max_egfr_date_210) ~ max_egfr_date_210,
+      !is.na(nearest_date_90) ~ nearest_date_90,
+      TRUE ~ index_date
+    ))
+  
+  # ⑥ time0 からの年差を計箁E
+  jin1_inclusion <- jin1_inclusion %>%
+    mutate(
+      days_from_time0 = as.numeric(difftime(date, time0, units = "days")),
+      years_from_time0 = round(days_from_time0 / 365.25, 3)
+    )
+  
+  # ⑦ time0 に一致する egfr�E�褁E��あれば最大値�E�を抽出
+  time0_egfr_df <- jin1_inclusion %>%
+    filter(date == time0) %>%
+    group_by(id, date) %>%
+    slice_max(egfr, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    dplyr::select(id, time0 = date, time0_egfr = egfr)
+  
+  # ⑧ id ごとに time0_egfr を付加
+  jin1_inclusion <- jin1_inclusion %>%
+    left_join(time0_egfr_df %>% dplyr::select(id, time0_egfr), by = "id")
+  colnames(jin1_inclusion)
+  
+  # CSV保孁E
+  library(readr)
+  write_csv(
+    jin1_inclusion,
+    "jin1_inclusion.csv"   # 保存ファイル名（作業チE��レクトリに保存されます！E
+  ) 
+}
