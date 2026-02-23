@@ -881,6 +881,7 @@ doc4 <- doc4 %>%
 print(doc4, target = out_tab4_docx)
 } #感度分析
 
+
 ##併存疾患表の作成(SuppleT1,2)
 {
 #####
