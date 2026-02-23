@@ -247,141 +247,111 @@ convertHeight(forest_plot$heights, "mm", valueOnly = TRUE)
 forest_plot$heights <- rep(unit(8, "mm"), nrow(forest_plot))
 }
 
-## =========================================================
-## Supplemental Figure 3: Interaction model forest plot
-##  - Title + footnotes
-##  - Rename group labels: Recovery/Non-Recovery -> AKD with/without Recovery
-##  - Save TIFF (600 dpi) + PDF
-##  前提: forest_plot がすでに作成済み
-## =========================================================
+# 交互作用なしのベースモデル
+cox_base <- coxph(
+  Surv(time_years, primary_death) ~
+    jin_label + ckd_bin + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
+  data = dat
+)
 
-library(dplyr)
-library(grid)
-library(gridExtra)
+# 交互作用モデルのcode記載を追記
+cox_int <- coxph(
+  Surv(time_years, primary_death) ~
+    jin_label * ckd_bin + age + index_cre + arb_acei_use + # `*` は主効果と交互作用の両方を含む
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
+  data = dat
+)
 
-# ---- 1) forest_plot 内で表示している表データ（plot_df_forest）も名称統一 ----
-# ※ plot_df_forest を作った後に forest_plot を作っているなら、先にこの置換をして forest_plot を作り直すのが理想。
-# すでに forest_plot を作った後なら、この置換→forest_plot再作成 を推奨します。
-plot_df_forest <- plot_df_forest %>%
-  mutate(
-    Comparison = case_when(
-      Comparison == "Recovery"      ~ "AKD with Recovery",
-      Comparison == "Non-Recovery"  ~ "AKD without Recovery",
-      TRUE ~ Comparison
-    )
+# 交互作用の尤度比検定（推奨）
+anova(cox_base, cox_int, test = "LRT")
+
+# --- 最終モデル（cox_base）の結果を整形 ---
+# 交互作用が有意でなかったため、このモデルの結果を主たる結果として採用する
+final_results <- tidy(cox_base, exponentiate = TRUE, conf.int = TRUE)
+
+print("--- Final Model Results (cox_base) ---")
+print(final_results, n = Inf)
+
+# 交互作用モデルから“層ごとのHR”を計算して表に
+# 交互作用モデルの係数を確認（Waldでも可）
+hr_int_table <- function(fit){
+  cf <- coef(fit); vc <- vcov(fit); nm <- names(cf)
+  
+  # 相互作用の係数名を安全に拾うヘルパー
+  find_name <- function(patterns) {
+    hit <- nm[Reduce(`|`, lapply(patterns, function(p) grepl(p, nm)))]
+    if (length(hit) == 0) return(NA_character_)
+    hit[1]
+  }
+  
+  # jin_label の主効果（Recovery/Non-Recovery）
+  b_rec  <- "jin_labelRecovery"
+  b_nrec <- "jin_labelNon-Recovery"
+  if (!b_rec %in% nm)  stop("主効果が見つかりません: ", b_rec)
+  if (!b_nrec %in% nm) stop("主効果が見つかりません: ", b_nrec)
+  
+  # ckd_bin の相互作用（順序が左右どちらでも拾う / factorなら ckdbin1 を許容）
+  int_rec  <- find_name(c(paste0("^", b_rec, ":(ckd_bin|ckd_bin1)$"),
+                          paste0("^(ckd_bin|ckd_bin1):", b_rec, "$")))
+  int_nrec <- find_name(c(paste0("^", b_nrec, ":(ckd_bin|ckd_bin1)$"),
+                          paste0("^(ckd_bin|ckd_bin1):", b_nrec, "$")))
+  
+  # HR計算の小関数（b:主効果名, int:相互作用名 or NA, ckd=0/1）
+  comp_one <- function(b, int, ckd){
+    if (ckd == 0) {
+      est <- cf[b]; v <- vc[b,b]
+    } else {
+      if (is.na(int)) stop("相互作用の係数が見つかりません（", b, " × CKD）。",
+                           "ckd_bin の型や水準、スパースを確認してください。")
+      est <- cf[b] + cf[int]
+      v   <- vc[b,b] + vc[int,int] + 2*vc[b,int]
+    }
+    se <- sqrt(v); HR <- exp(est); lo <- exp(est - 1.96*se); hi <- exp(est + 1.96*se)
+    z <- est / se; p_value <- 2 * pnorm(-abs(z))  # Wald検定によるP値
+    c(HR = HR, CI_low = lo, CI_high = hi, P_value = p_value)
+  }
+  
+  # 組み立て
+  out <- rbind(
+    c("CKD: no", "Recovery vs nonAKD",      comp_one(b_rec,  int_rec,  0)),
+    c("CKD: no", "Non-Recovery vs nonAKD",  comp_one(b_nrec, int_nrec, 0)),
+    c("CKD: yes","Recovery vs nonAKD",      comp_one(b_rec,  int_rec,  1)),
+    c("CKD: yes","Non-Recovery vs nonAKD",  comp_one(b_nrec, int_nrec, 1))
   )
-
-# 列名はそのままでOK（必要ならここで変更可能）
-# colnames(plot_df_forest) <- c("Subgroup", "Group", " ", "Hazard Ratio (95% CI)", "P-value")
-
-# ---- 2) HRの数値側（tbl_total）も名称統一（行対応をズラさないため）----
-tbl_total <- tbl_total %>%
-  mutate(
-    Comparison = case_when(
-      Comparison == "Recovery"      ~ "AKD with Recovery",
-      Comparison == "Non-Recovery"  ~ "AKD without Recovery",
-      TRUE ~ Comparison
-    )
+  
+  tibble::tibble(
+    Subgroup   = out[,1],
+    Comparison = out[,2],
+    HR         = as.numeric(out[,3]),
+    CI_low     = as.numeric(out[,4]),
+    CI_high    = as.numeric(out[,5]),
+    P_value    = as.numeric(out[,6])
   )
-
-# ★ forest_plot を「置換後データ」で作り直す（これが一番確実）
-forest_plot <- forestploter::forest(
-  data = plot_df_forest,
-  est = ifelse(tbl_total$is_header, NA, tbl_total$HR),
-  lower = ifelse(tbl_total$is_reference | tbl_total$is_header,
-                 ifelse(tbl_total$is_header, NA, tbl_total$HR),
-                 tbl_total$CI_low),
-  upper = ifelse(tbl_total$is_reference | tbl_total$is_header,
-                 ifelse(tbl_total$is_header, NA, tbl_total$HR),
-                 tbl_total$CI_high),
-  sizes = ifelse(tbl_total$is_header, 0.1, 0.6),
-  ci_column = 3,
-  is_summary = tbl_total$is_header,
-  ref_line = 1,
-  x_trans = "log",
-  xlim = c(0.5, 10),
-  ticks_at = c(0.5, 1, 2, 4, 8),
-  arrow_lab = c("Lower", "Higher")
-)
-
-# ---- 3) タイトル + 注釈（footnote）を追加して1枚にまとめる ----
-title_grob <- grid::textGrob(
-  "Supplemental Figure 3. Adjusted Hazard Ratios by CKD Status (Interaction Model)",
-  x = unit(0, "npc"), y = unit(1, "npc"),
-  just = c("left", "top"),
-  gp = grid::gpar(fontsize = 14, fontface = "bold")
-)
-
-footnote_grob <- grid::textGrob(
-  "AKD, acute kidney disease. HR, hazard ratio; CI, confidence interval. Two-sided p value <0.05 was considered statistically significant.",
-  x = unit(0, "npc"), y = unit(1, "npc"),
-  just = c("left", "top"),
-  gp = grid::gpar(fontsize = 9)
-)
-
-supp_fig3 <- gridExtra::arrangeGrob(
-  title_grob,
-  forest_plot,
-  footnote_grob,
-  ncol = 1,
-  heights = c(0.08, 1, 0.12)
-)
-
-grid::grid.newpage()
-grid::grid.draw(supp_fig3)
-
-# ---- helper: grobを少し縮小して描画（横切れ対策）----
-draw_scaled <- function(grob, scale = 0.92){
-  grid::grid.newpage()
-  grid::pushViewport(grid::viewport(width = grid::unit(scale, "npc"),
-                                    height = grid::unit(1, "npc"),
-                                    just = c("center", "center")))
-  grid::grid.draw(grob)
-  grid::popViewport()
 }
 
+# 実行
+hr_int <- hr_int_table(cox_int)
+print(hr_int)
 
-# ---- 4) 保存（TIFF 600dpi + PDF）----
-out_tif <- "X:/R/SupplementalFigure3_interaction_forest_CKD.tiff"
-out_pdf <- "X:/R/SupplementalFigure3_interaction_forest_CKD_check.pdf"
-
-if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-
-# ★ TIFF：横を少し広く＋縮小描画
-ragg::agg_tiff(
-  filename = out_tif,
-  width = 200, height = 160, units = "mm",   # ← 180→200mmに拡張
-  res = 600, compression = "lzw"
-)
-draw_scaled(supp_fig3, scale = 0.92)         # ← 0.90～0.95で調整可
-dev.off()
-
-# ★ PDF：横を少し広く＋縮小描画
-pdf(out_pdf, width = 8.3, height = 6.3)      # ← 7.1→8.3 inch に拡張
-draw_scaled(supp_fig3, scale = 0.92)
-dev.off()
-
-# ---- 5) 交互作用モデルの表（hr_int）も名称統一して保存する場合 ----
-# ※ hr_int がある場合のみ
-if (exists("hr_int")) {
-  hr_int2 <- hr_int %>%
-    mutate(
-      Comparison = case_when(
-        Comparison == "Recovery vs nonAKD"     ~ "AKD with Recovery vs nonAKD",
-        Comparison == "Non-Recovery vs nonAKD" ~ "AKD without Recovery vs nonAKD",
-        Comparison == "Recovery"              ~ "AKD with Recovery",
-        Comparison == "Non-Recovery"          ~ "AKD without Recovery",
-        TRUE ~ Comparison
-      )
-    )
-  write.csv(hr_int2, file = "X:/R/SupplementalFigure3_interaction_forest_CKD_hr_by_CKD.xlsx_ready.csv", row.names = FALSE)
-}
-
-
-
-
-
-
+setwd("X:/R")
+# Supplementary Table 1 を CSV で保存
+write.csv(hr_int,
+          file = "Supplementary_Table1_hr_by_CKD.csv",
+          row.names = FALSE)
+install.packages("openxlsx")
+library(openxlsx)
+# ファイル作成
+write.xlsx(hr_int,
+           file = "Supplementary_Table1_hr_by_CKD.xlsx",
+           rowNames = FALSE)
+library(knitr)
+install.packages("kableExtra")
+library(kableExtra)
+hr_int %>%
+  kable("html",
+        caption = "Supplementary Table 1. Adjusted Hazard Ratios by CKD Status (Interaction Model)") %>%
+  kable_styling(full_width = FALSE)
 
 
 

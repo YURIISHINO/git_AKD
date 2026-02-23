@@ -411,8 +411,564 @@ print(ids_no_data_MM, n = Inf)
 # 必要ならCSVに保存
 # write.csv(ids_no_data_MM, "ids_NoData_MM.csv", row.names = FALSE)
 
-#AKI/AKD日の日にち#####
-library(readr)
-jin1_AKI_date_nonNA_unique <- read_csv("E:/R/jin1_AKI_date_nonNA_unique.csv")
-jin1_AKD_date_nonNA_unique <- read_csv("E:/R/jin1_AKD_date_nonNA_unique.csv")
 
+{
+  # ============================================================
+  # Standardized residual heatmap (AKD only) among top 10 departments
+  # One-shot paste-and-run
+  # Requires objects in memory:
+  #   - jin1_Eligibile_include_code
+  #   - department_lookup_en (main_code <-> clinical_department_en)
+  # ============================================================
+  
+  suppressPackageStartupMessages({
+    library(dplyr)
+    library(tidyr)
+    library(ggplot2)
+    library(scales)
+  })
+  
+  # --------------------------
+  # 0) Safety checks
+  # --------------------------
+  if (!exists("jin1_Eligibile_include_code")) {
+    stop("Object 'jin1_Eligibile_include_code' not found in environment.")
+  }
+  if (!exists("department_lookup_en")) {
+    stop("Object 'department_lookup_en' not found in environment.")
+  }
+  
+  required_cols <- c("id", "exclude", "jin_status")
+  missing_cols <- setdiff(required_cols, colnames(jin1_Eligibile_include_code))
+  if (length(missing_cols) > 0) {
+    stop(paste0("Missing required columns in jin1_Eligibile_include_code: ",
+                paste(missing_cols, collapse = ", ")))
+  }
+  
+  # --------------------------
+  # 1) Build 1-row-per-id dataset + AKD flag
+  # --------------------------
+  dat_id <- jin1_Eligibile_include_code %>%
+    filter(exclude == "include") %>%
+    distinct(id, .keep_all = TRUE) %>%
+    mutate(akd_flag = if_else(jin_status == "AKD", 1L, 0L))
+  
+  # --------------------------
+  # 2) Create 'dept' safely
+  #   Priority:
+  #     (a) if dept already exists -> use it
+  #     (b) else if clinical_department_en exists -> use it
+  #     (c) else if main_code exists -> join lookup table to create dept
+  # --------------------------
+  if ("dept" %in% colnames(dat_id)) {
+    dat_id <- dat_id %>% mutate(dept = as.character(dept))
+  } else if ("clinical_department_en" %in% colnames(dat_id)) {
+    dat_id <- dat_id %>% mutate(dept = as.character(clinical_department_en))
+  } else {
+    # Need main_code to join lookup
+    if (!"main_code" %in% colnames(dat_id)) {
+      stop("No 'dept' or 'clinical_department_en' column found, and 'main_code' is also missing. Cannot define department.")
+    }
+    # Join lookup
+    if (!all(c("main_code", "clinical_department_en") %in% colnames(department_lookup_en))) {
+      stop("department_lookup_en must have columns: main_code, clinical_department_en")
+    }
+    dat_id <- dat_id %>%
+      left_join(department_lookup_en, by = "main_code") %>%
+      mutate(dept = as.character(clinical_department_en))
+  }
+  
+  # Remove NA/blank departments
+  dat_id <- dat_id %>%
+    filter(!is.na(dept), dept != "")
+  
+  # --------------------------
+  # 3) Select top 10 departments by AKD count
+  # --------------------------
+  top10_dept <- dat_id %>%
+    group_by(dept) %>%
+    summarise(akd_n = sum(akd_flag == 1), .groups = "drop") %>%
+    arrange(desc(akd_n)) %>%
+    slice_head(n = 10) %>%
+    pull(dept)
+  
+  if (length(top10_dept) < 2) {
+    stop("Too few departments after filtering. Check dept definition / missing values.")
+  }
+  
+  dat_top10 <- dat_id %>%
+    filter(dept %in% top10_dept) %>%
+    mutate(dept = factor(dept, levels = top10_dept))  # top1 at top
+  
+  # --------------------------
+  # 4) Contingency table -> chi-square -> standardized residuals
+  # --------------------------
+  tab <- with(dat_top10, table(dept, akd_flag))
+  # Force column names to nonAKD/AKD
+  if (ncol(tab) != 2) {
+    stop("Contingency table does not have exactly 2 columns. Check akd_flag coding.")
+  }
+  colnames(tab) <- c("nonAKD", "AKD")
+  
+  chi <- suppressWarnings(chisq.test(tab))
+  stdres <- as.matrix(chi$stdres)
+  
+  # Ensure AKD column exists
+  if (!"AKD" %in% colnames(stdres)) {
+    stop("Standardized residual matrix has no 'AKD' column. Something is wrong with tab column naming.")
+  }
+  
+  # --------------------------
+  # 5) Plot data: AKD column only
+  # --------------------------
+  df_plot <- tibble(
+    dept = rownames(stdres),
+    std_resid = as.numeric(stdres[, "AKD"])
+  ) %>%
+    mutate(dept = factor(dept, levels = rev(top10_dept)))
+  df_plot <- df_plot %>%
+    mutate(dept = forcats::fct_reorder(dept, std_resid))
+  
+  # --------------------------
+  # 6) Plot (match your target style)
+  # --------------------------
+  p <- ggplot(df_plot, aes(x = "AKD", y = dept, fill = std_resid)) +
+    geom_tile(color = "white", linewidth = 0.5) +
+    scale_fill_gradient2(
+      low = "blue", mid = "white", high = "red",
+      midpoint = 0,
+      limits = c(-10, 10),
+      oob = scales::squish,
+      breaks = c(-10, -5, 0, 5, 10),
+      name = "Std. residual\n(AKD)"
+    ) +
+    labs(
+      title = "Standardized residuals\nfor AKD among top 10 departments",
+      x = "AKD",
+      y = "Clinical department (AKD top 10)"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.y  = element_text(size = 13),
+      axis.text.x  = element_text(size = 13),
+      plot.title   = element_text(size = 18, face = "bold", hjust = 0.5),
+      legend.title = element_text(size = 13),
+      legend.text  = element_text(size = 12)
+    )
+  
+  print(p)
+  
+  # --------------------------
+  # 7) (Optional) show chi-square warning context
+  # --------------------------
+  cat("\n[Note] chisq.test warning about approximation may occur when expected counts are small.\n")
+  cat("       You can inspect expected counts via: chi$expected\n")
+  
+}
+
+
+
+
+#AKI/AKD日の日にち#####
+
+{
+  ############################################################
+  # AKD 3群（Recovery / Non-Recovery / No-data）別
+  # AKD_date当日の採血オーダー科：縦の積み上げ棒（Top5 + Other）
+  #  - 色/凡例は参照コード（base_palette + auto_cols、Other固定）を踏襲
+  ############################################################
+  
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(forcats)
+  library(purrr)
+  
+  # -----------------------------
+  # 0) Load
+  # -----------------------------
+  loc <- locale(encoding = "SHIFT-JIS")
+  setwd("X:/R")
+  
+  # ---- cre 2012/2013 -> id×date で code を "A&B" にまとめる ----
+  cre_2012 <- read_csv("jin/cre_over18/cre_2012_over18.csv",
+                       locale = loc, skip = 3,
+                       col_types = cols(.default = "c")) %>%
+    select(患者ID, 科ｺｰﾄﾞ, 検査日)
+  
+  cre_2013 <- read_csv("jin/cre_over18/cre_2013_over18.csv",
+                       locale = loc, skip = 3,
+                       col_types = cols(.default = "c")) %>%
+    select(患者ID, 科ｺｰﾄﾞ, 検査日)
+  
+  cre_2012_2013_sub <- bind_rows(cre_2012, cre_2013) %>%
+    mutate(検査日 = as.Date(as.character(検査日), format = "%Y%m%d")) %>%
+    transmute(
+      id   = as.numeric(患者ID),
+      date = 検査日,
+      code = 科ｺｰﾄﾞ
+    ) %>%
+    group_by(id, date) %>%
+    summarise(code = paste(unique(code), collapse = "&"), .groups = "drop")
+  
+  # ---- jin1_Eligibile 読み込み（ラベル作成用）----
+  jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = loc)
+  
+  # -----------------------------
+  # 1) AKD 3群ラベル（Recovery / Non-Recovery / No-data）を作る
+  #    ※あなたの定義を踏襲（nonAKDはここでは不要なので落とす）
+  # -----------------------------
+  akd_label_3 <- jin1_Eligibile %>%
+    filter(exclude == "include") %>%
+    distinct(id, .keep_all = TRUE) %>%
+    mutate(
+      jin_label = case_when(
+        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ "No-data",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(jin_label)) %>%
+    mutate(jin_label = factor(jin_label, levels = c("Non-Recovery", "Recovery", "No-data"))) %>%
+    select(id, jin_label)
+  
+  # -----------------------------
+  # 2) AKD_date当日の採血オーダー科を突合し、3群ラベルを付与
+  # -----------------------------
+  # 消化器外科コードをまとめる
+  digestive_codes <- c("DK","DM","DL","DR")
+  
+  normalize_codes_vec <- function(code_string) {
+    if (is.na(code_string) || code_string == "") return(character(0))
+    codes <- unlist(str_split(code_string, "&"))
+    codes <- str_trim(codes)
+    codes[codes %in% digestive_codes] <- "DigestiveSurgery"
+    unique(codes)
+  }
+  
+  # 科コード→科名（英語）lookup（あなたの表を踏襲）
+  department_lookup_en <- tibble(
+    main_code = c(
+      "AL", "AQ", "HH", "AP", "AM", "AG", "AN", "AH", "FF",
+      "DE", "LL", "AR", "MM", "DQ", "GG", "EE", "DN",
+      "DH", "DF", "BB", "PS", "RR", "AK", "CC", "KK", "YY",
+      "PP", "NN", "AS", "FS", "DG", "DigestiveSurgery"
+    ),
+    clinical_department_en = c(
+      "Endocrinology","Hematology","Urology","Cardiology","Respiratory Medicine",
+      "Gastroenterology","Hepatology","Nephrology","Orthopedics",
+      "Cardiovascular Surgery","Otorhinolaryngology","Immunology",
+      "Obstetrics and Gynecology","Emergency Medicine","Dermatology","Neurosurgery",
+      "Vascular Surgery","Breast Surgery","Thoracic Surgery","Psychiatry",
+      "Plastic Surgery","Dentistry and Oral Surgery","Neurology","Pediatrics",
+      "Ophthalmology","Administrative Dept.","Anesthesiology","Radiation Therapy",
+      "Clinical Pharmacy","Rehabilitation","Pediatric Surgery","Digestive Surgery"
+    )
+  )
+  
+  akd_day3 <- jin1_AKD_date_nonNA_unique %>%
+    mutate(AKD_date = as.Date(AKD_date)) %>%
+    left_join(akd_label_3, by = "id") %>%                       # 3群ラベル付与
+    filter(!is.na(jin_label)) %>%
+    left_join(cre_2012_2013_sub, by = c("id" = "id", "AKD_date" = "date"))
+  
+  # 突合状況チェック
+  akd_day3 %>%
+    group_by(jin_label) %>%
+    summarise(
+      n_patients = n_distinct(id),
+      n_with_code = sum(!is.na(code)),
+      n_missing_code = sum(is.na(code)),
+      .groups = "drop"
+    ) %>% print(n = Inf)
+  
+  # -----------------------------
+  # 3) code分解→科名→患者ベース構成（群別）
+  # -----------------------------
+  akd_dept_patient3 <- akd_day3 %>%
+    mutate(code_vec = purrr::map(code, normalize_codes_vec)) %>%
+    unnest(code_vec, keep_empty = TRUE) %>%
+    rename(main_code = code_vec) %>%
+    left_join(department_lookup_en, by = "main_code") %>%
+    mutate(
+      clinical_department_en = if_else(is.na(clinical_department_en), "Other", clinical_department_en)
+    ) %>%
+    distinct(id, jin_label, AKD_date, clinical_department_en)  # 患者×群×当日×科
+  
+  # 群別に全体比率（%）
+  overall3 <- akd_dept_patient3 %>%
+    count(jin_label, clinical_department_en, name = "n") %>%
+    group_by(jin_label) %>%
+    mutate(pct = 100 * n / sum(n)) %>%
+    ungroup()
+  
+  # -----------------------------
+  # 4) Top5 + Other（群ごとにTop5）
+  # -----------------------------
+  plot_df <- overall3 %>%
+    group_by(jin_label) %>%
+    mutate(rank = dense_rank(desc(pct))) %>%
+    mutate(dept = if_else(rank <= 5, clinical_department_en, "Other")) %>%
+    ungroup() %>%
+    group_by(jin_label, dept) %>%
+    summarise(pct = sum(pct), .groups = "drop") %>%
+    group_by(jin_label) %>%
+    mutate(pct = 100 * pct / sum(pct)) %>%
+    ungroup()
+  
+  # ---- 凡例レベル（出現科のみ。Otherを最後）----
+  dept_levels_all <- plot_df %>% distinct(dept) %>% pull(dept)
+  dept_levels_all <- c(setdiff(dept_levels_all, "Other"), "Other")
+  
+  plot_df <- plot_df %>%
+    mutate(
+      jin_label = factor(jin_label, levels = c("Non-Recovery", "Recovery", "No-data")),
+      dept_fac  = factor(dept, levels = dept_levels_all)
+    )
+  
+  # -----------------------------
+  # 5) 参照コード準拠の配色（base_palette + auto_cols、Other固定グレー）
+  # -----------------------------
+  base_palette <- c(
+    "Digestive Surgery"         = "#1B9E77",
+    "Endocrinology"             = "#E41A1C",
+    "Hematology"                = "#377EB8",
+    "Obstetrics and Gynecology" = "#E78AC3",
+    "Urology"                   = "#FFA07A",
+    "Cardiology"                = "#984EA3",
+    "Cardiovascular Surgery"    = "#66C2A5",
+    "Emergency Medicine"        = "#FF7F00",
+    "Otorhinolaryngology"       = "#FFD700",
+    "Other"                     = "#BEBEBE"
+  )
+  
+  missing_keys <- setdiff(dept_levels_all, names(base_palette))
+  missing_keys <- setdiff(missing_keys, "Other")
+  n_missing <- length(missing_keys)
+  
+  auto_cols <- if (n_missing > 0) {
+    grDevices::hcl(
+      h = seq(15, 375, length.out = n_missing + 1)[1:n_missing],
+      c = 60, l = 65
+    )
+  } else character(0)
+  names(auto_cols) <- missing_keys
+  
+  local_palette <- c(base_palette, auto_cols)
+  local_palette["Other"] <- "#BEBEBE"
+  local_palette <- local_palette[dept_levels_all]
+  
+  # -----------------------------
+  # 6) Plot：縦の積み上げ棒（3本：3群）
+  # -----------------------------
+  p <- ggplot(plot_df, aes(x = jin_label, y = pct, fill = dept_fac)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = ifelse(pct >= 5, sprintf("%.1f", pct), "")),
+              position = position_stack(vjust = 0.5),
+              size = 3, color = "black") +
+    scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
+    scale_fill_manual(
+      values = local_palette,
+      limits = dept_levels_all,
+      drop   = FALSE,
+      name   = "Clinical Department"
+    ) +
+    labs(
+      x = NULL,
+      y = "Ratio (%)",
+      title = "Department composition on the AKD date by recovery status (Top 5 + Other)"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 15, hjust = 1),
+      panel.grid.minor = element_blank()
+    )
+  
+  print(p)
+  
+  # 保存（論文用）
+  ggsave("Figure_AKDdate_department_stacked_by_recovery.png", p, width = 7.0, height = 4.8, dpi = 600)
+  ggsave("Figure_AKDdate_department_stacked_by_recovery.tiff", p, width = 7.0, height = 4.8, dpi = 600, compression = "lzw")
+  
+  
+}  
+
+############################################################
+# 7) All（3群をまとめて1本）：縦の積み上げ棒（Top5 + Other）
+#    ※母集団は「3群ラベルが付与できた患者」に限定（= akd_dept_patient3）
+############################################################
+
+# -----------------------------
+# A) 全体（All）で科別割合（%）を作る
+#    ※akd_dept_patient3 は 3群コードで既に作成済み
+#      （id, jin_label, AKD_date, clinical_department_en）
+# -----------------------------
+overall_all <- akd_dept_patient3 %>%
+  count(clinical_department_en, name = "n") %>%
+  mutate(pct = 100 * n / sum(n)) %>%
+  arrange(desc(pct)) %>%
+  mutate(rank = dense_rank(desc(pct))) %>%
+  mutate(dept = if_else(rank <= 5, clinical_department_en, "Other")) %>%
+  group_by(dept) %>%
+  summarise(pct = sum(pct), .groups = "drop") %>%
+  mutate(pct = 100 * pct / sum(pct)) %>%   # 念のため100%に再正規化
+  arrange(desc(pct))
+
+# ---- 凡例順（Otherを最後）----
+dept_levels_all2 <- overall_all %>% pull(dept) %>% unique()
+dept_levels_all2 <- c(setdiff(dept_levels_all2, "Other"), "Other")
+
+overall_all <- overall_all %>%
+  mutate(dept_fac = factor(dept, levels = dept_levels_all2))
+
+# -----------------------------
+# B) 配色（参照コード踏襲：base_palette + auto_cols、Other固定）
+# -----------------------------
+base_palette <- c(
+  "Digestive Surgery"         = "#1B9E77",
+  "Endocrinology"             = "#E41A1C",
+  "Hematology"                = "#377EB8",
+  "Obstetrics and Gynecology" = "#E78AC3",
+  "Urology"                   = "#FFA07A",
+  "Cardiology"                = "#984EA3",
+  "Cardiovascular Surgery"    = "#66C2A5",
+  "Emergency Medicine"        = "#FF7F00",
+  "Otorhinolaryngology"       = "#FFD700",
+  "Other"                     = "#BEBEBE"
+)
+
+missing_keys2 <- setdiff(dept_levels_all2, names(base_palette))
+missing_keys2 <- setdiff(missing_keys2, "Other")
+n_missing2 <- length(missing_keys2)
+
+auto_cols2 <- if (n_missing2 > 0) {
+  grDevices::hcl(
+    h = seq(15, 375, length.out = n_missing2 + 1)[1:n_missing2],
+    c = 60, l = 65
+  )
+} else character(0)
+names(auto_cols2) <- missing_keys2
+
+local_palette2 <- c(base_palette, auto_cols2)
+local_palette2["Other"] <- "#BEBEBE"
+local_palette2 <- local_palette2[dept_levels_all2]
+
+# -----------------------------
+# C) Plot：縦の積み上げ棒（1本）
+# -----------------------------
+p_all <- ggplot(overall_all, aes(x = "All", y = pct, fill = dept_fac)) +
+  geom_col(width = 0.55) +
+  geom_text(aes(label = ifelse(pct >= 5, sprintf("%.1f", pct), "")),
+            position = position_stack(vjust = 0.5),
+            size = 3, color = "black") +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
+  scale_fill_manual(
+    values = local_palette2,
+    limits = dept_levels_all2,
+    drop   = FALSE,
+    name   = "Clinical Department"
+  ) +
+  labs(
+    x = NULL,
+    y = "Ratio (%)",
+    title = "Department composition on the AKD date (All AKD; Top 5 + Other)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    panel.grid.minor = element_blank()
+  )
+
+print(p_all)
+
+ggsave("Figure_AKDdate_department_stacked_allAKD.png", p_all,
+       width = 4.0, height = 5.0, dpi = 600)
+ggsave("Figure_AKDdate_department_stacked_allAKD.tiff", p_all,
+       width = 4.0, height = 5.0, dpi = 600, compression = "lzw")
+
+
+
+{
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(purrr)
+  top5_by_group <- akd_dept_patient3 %>%
+    count(jin_label, clinical_department_en, name = "n_patients") %>%
+    group_by(jin_label) %>%
+    arrange(desc(n_patients)) %>%
+    slice_head(n = 5) %>%
+    ungroup()
+  
+  # ---- AKD 3群ラベル（あなたの定義を踏襲）----
+  akd_label_3 <- jin1_Eligibile %>%
+    filter(exclude == "include") %>%
+    distinct(id, .keep_all = TRUE) %>%
+    mutate(
+      jin_label = case_when(
+        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ "No-data",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(jin_label)) %>%
+    mutate(jin_label = factor(jin_label,
+                              levels = c("Non-Recovery", "Recovery", "No-data"))) %>%
+    select(id, jin_label)
+  
+  # ---- 消化器外科コードまとめ ----
+  digestive_codes <- c("DK","DM","DL","DR")
+  
+  normalize_codes_vec <- function(code_string) {
+    if (is.na(code_string) || code_string == "") return(character(0))
+    codes <- unlist(str_split(code_string, "&"))
+    codes <- str_trim(codes)
+    codes[codes %in% digestive_codes] <- "DigestiveSurgery"
+    unique(codes)
+  }
+  
+  # ---- AKD_date当日の科（患者×群×科）----
+  akd_dept_patient3 <- jin1_AKD_date_nonNA_unique %>%
+    mutate(AKD_date = as.Date(AKD_date)) %>%
+    left_join(akd_label_3, by = "id") %>%
+    filter(!is.na(jin_label)) %>%
+    left_join(cre_2012_2013_sub, by = c("id" = "id", "AKD_date" = "date")) %>%
+    mutate(code_vec = map(code, normalize_codes_vec)) %>%
+    unnest(code_vec, keep_empty = TRUE) %>%
+    rename(main_code = code_vec) %>%
+    left_join(department_lookup_en, by = "main_code") %>%
+    mutate(
+      clinical_department_en =
+        if_else(is.na(clinical_department_en), "Other", clinical_department_en)
+    ) %>%
+    distinct(id, jin_label, clinical_department_en)
+  group_totals <- akd_dept_patient3 %>%
+    distinct(id, jin_label) %>%
+    count(jin_label, name = "total_patients")
+  
+  print(group_totals)
+  final_table <- top5_by_group %>%
+    left_join(group_totals, by = "jin_label") %>%
+    arrange(jin_label, desc(n_patients))
+  
+  print(final_table, n = Inf)
+  
+  
+  top5_by_group <- akd_dept_patient3 %>%
+    count(jin_label, clinical_department_en, name = "n_patients") %>%
+    group_by(jin_label) %>%
+    arrange(desc(n_patients)) %>%
+    slice_head(n = 5) %>%
+    ungroup()
+  
+  
+}

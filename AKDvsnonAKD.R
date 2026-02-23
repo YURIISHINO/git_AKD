@@ -329,22 +329,6 @@ if (!exists("median_interval")) {
 }
 window_width <- median_interval * 0.75
 
-# 4) Time Window データ生成関数
-create_time_window_data_2 <- function(data, targets, window) {
-  result_list <- vector("list", length(targets))
-  for (i in seq_along(targets)) {
-    target <- targets[i]
-    window_data <- data %>%
-      filter(abs(years_from_time0 - target) <= window) %>%
-      group_by(id, jin_status) %>%
-      slice_min(abs(years_from_time0 - target), n = 1, with_ties = FALSE) %>%
-      ungroup() %>%
-      mutate(target_time = target)
-    result_list[[i]] <- window_data
-  }
-  bind_rows(result_list)
-}
-window_data_2 <- create_time_window_data_2(akd_time_2, target_timepoints, window_width)
 
 # 5) 実測ΔeGFR（time0 が欠けるIDに備え、最も0に近い測定を基準にする）
 window_data_obs2 <- window_data_2 %>%

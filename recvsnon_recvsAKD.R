@@ -1,1444 +1,887 @@
 {
-#必要な情報をすべて含有するcsvファイル(jin1_Eligible? primay_ESKDやdeath情報や感度分析に必要な情報などすべて含有)を作成し、適当なdfを作成
-View(jin1_Eligibile)
-library(readr)
+
+############################################################
+# Figure 2 (KM only: Legend + KM + Number at risk)
+#  + Table 2 (HR only)  --- ONE-PASS COPY-PASTE ---
+#  - Figure2 is packed into the upper half; large blank space at bottom
+#  - Risk panel height is compressed (reduces "spaced-out" impression)
+#  - Risk row spacing controlled by fixed y_map (stable)
+#  - Table2 saved separately (bordered) + CSV
+############################################################
+
+graphics.off()
+
+# --------------------------
+# Packages
+# --------------------------
+pkgs <- c("readr","dplyr","survival","broom","ggplot2",
+          "grid","gridExtra","gtable","tibble","ragg")
+to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
+
+library(readr); library(dplyr); library(survival); library(broom); library(ggplot2)
+library(grid); library(gridExtra); library(gtable); library(tibble)
+
+# ==========================================================
+# TUNING (★ここだけ調整すればOK)
+# ==========================================================
+base_fs <- 10
+risk_fs <- 11
+hr_fs   <- 11
+
+km_line_lwd <- 1.05
+km_ci_alpha <- 0.18
+
+num_size <- 3.6            # risk numbers
+leg_text_size <- 3.2       # legend text size
+
+# ---- Risk row spacing (fixed y) ----
+# closer values => tighter rows
+y_map <- c(
+  "non-AKD"              = 0.50,
+  "AKD with recovery"    = 0.40,
+  "AKD without recovery" = 0.30
+)
+
+# ---- Risk title spacing ----
+risk_title_mb <- 2         # title -> table (downward)
+risk_margin_t <- 10        # top margin of risk panel (more => more space above title)
+risk_margin_b <- 2
+
+# ---- Risk panel view window (controls title-to-table & bottom blank inside risk) ----
+# smaller upper => title closer to 1st row; larger lower => less bottom blank
+risk_ylim <- c(0.28, 0.56)  # ★あなたの現状に合わせた推奨
+
+# ---- Make the whole Figure2 packed to upper half ----
+# 1) KM vs Risk height ratio (smaller risk => tighter look)
+km_vs_risk_heights <- c(2.00, 1.30)   # (KM, risk) 例: (3.8,0.75)でさらにrisk圧縮
+# 2) Add large blank at bottom of final Figure2
+fig2_heights <- c(0.32, 4.40, 1.20)  # (legend, KM+risk, bottom blank)
+
+# ==========================================================
+# Paths
+# ==========================================================
 setwd("X:/R")
-jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-colnames(jin1_Eligibile)
-#アウトカム解析に必要なcodeのみ####
-#jin1_Eligibileから一意のidだけ抽出
-jin1_Eligibile_unique_id <- jin1_Eligibile %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
-  group_by(id) %>%
-  arrange(index_date) %>%
-  slice(1) %>%
-  ungroup()
-#死亡についてのカプランマイヤー####
-install.packages("survminer")
-library(survival)
-library(survminer)
-library(dplyr)
+in_csv <- "jin1_Eligibile.csv"
 
-#死亡についてのカプランマイヤーデータ整形
-jin1_Eligibile_death <- jin1_Eligibile_unique_id %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
-  mutate(
-    jin_label = case_when(
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
-      TRUE ~ NA_character_
-    ),
-    jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),  # 順序付け
-    time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
-  ) %>%
-  filter(!is.na(jin_label), time_years >= 0)
+out_dir <- file.path("X:/R","primary")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-fit_death <- survfit(Surv(time_years, primary_death) ~ jin_label, data = jin1_Eligibile_death)
+out_fig2_tif <- file.path(out_dir,"Figure2_primary_KM.tif")
+out_fig2_pdf <- file.path(out_dir,"Figure2_primary_KM.pdf")
+out_tab2_tif <- file.path(out_dir,"Table2_primary_HR.tif")
+out_tab2_pdf <- file.path(out_dir,"Table2_primary_HR.pdf")
+out_tab2_csv <- file.path(out_dir,"Table2_primary_HR.csv")
 
-p_death <- ggsurvplot(
-  fit_death,
-  data        = jin1_Eligibile_death,
-  fun         = "event",
-  pval        = TRUE,
-  conf.int    = TRUE,
-  risk.table  = TRUE,
-  xlim        = c(0, 9.5),
-  ylim        = c(0, 0.4),
-  title       = "Cumulative incidence of all-cause death",
-  xlab        = "Years",
-  ylab        = "Cumulative incidence",
-  break.time.by = 2,
-  
-  # ★ここを追加（凡例ラベルをシンプルに）
-  legend.labs = c("nonAKD", "Recovery", "Non-Recovery"),
-  
-  # 任意（凡例タイトル変更）
-  legend.title = "Group"
-)
+# ==========================================================
+# Load & build 1 row per patient
+# ==========================================================
+jin1_Eligibile <- read_csv(in_csv, locale = locale(encoding = "SHIFT-JIS"))
 
-#死亡者人数を集計
-library(dplyr)
-
-jin1_Eligibile_death %>%
-  group_by(jin_label) %>%
-  summarise(
-    n_primary_death = sum(primary_death == 1, na.rm = TRUE)
-  )
-
-
-##論文用の図（デーブル付き）
-# 2カラム用の例：幅 180 mm ≒ 7.1 inch
-setwd("X:/R")
-tiff(
-  filename = "Figure2A_death_KM.tiff",
-  width    = 7.1,   # inch
-  height   = 6.0,   # inch
-  units    = "in",
-  res      = 600,
-  compression = "lzw",
-  type     = "cairo"   # ← ここがポイント
-)
-
-print(p_death)         # カーブ＋リスクテーブルをまとめて出力
-
-dev.off()
-
-## ---- 図の作成（曲線のみ、抄録仕様）
-km_plot <- ggsurvplot(
-  fit_death,
-  data = jin1_Eligibile_death,
-  fun = "event",
-  pval = TRUE,
-  conf.int = TRUE,
-  conf.int.alpha = 0.20,          # CIを薄く
-  size = 1.1,                     # 線を少し太く
-  risk.table = FALSE,             # 抄録では非表示推奨
-  xlim = c(0, 9.5),
-  ylim = c(0, 0.4),
-  title = "Cumulative incidence of death by AKD recovery status",
-  xlab = "Years since index date",
-  ylab = "Cumulative incidence",
-  legend.title = NULL,
-  legend.labs = c("non-AKD", "AKD Recovery", "AKD Non-Recovery"),
-  palette = c("#E64B35", "#00A087", "#4DBBD5"),
-  ggtheme = theme_minimal(base_size = 12)
-)
-
-km_plot$plot <- km_plot$plot +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-    axis.title = element_text(size = 12),
-    axis.text  = element_text(size = 10)
-  )
-
-# （任意）p値の位置を微調整したい場合
-# km_plot$plot <- km_plot$plot + annotate("text", x = 0.5, y = 0.36, label = km_plot$pval, hjust = 0)
-
-# ---- JPEGで保存（640×480px, ≤1.5MB)
-jpeg("death_curve_for_abstract.jpeg", width = 640, height = 480, units = "px", quality = 95)
-print(km_plot$plot)
-dev.off()
-
-#cox比例ハザード
-{
-# =========================
-# Figure 3: HR table + Forest (AKD groups vs nonAKD)
-# Output: Figure3_forest_with_table_death_akd_3groups.tif (+ check PDF)
-# =========================
-
-library(dplyr)
-library(survival)
-library(broom)
-library(ggplot2)
-library(gridExtra)
-library(grid)
-
-# ---- 1) 1人1行データ作成（CKD_status参照=nonCKD）----
-dat_cox <- jin1_Eligibile %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+dat1 <- jin1_Eligibile %>%
+  filter(exclude == "include", jin_status %in% c("AKD","nonAKD")) %>%
   group_by(id) %>%
   arrange(index_date, date, .by_group = TRUE) %>%
   slice(1) %>%
-  ungroup() %>%
+  ungroup()
+
+levels_full <- c("non-AKD","AKD with recovery","AKD without recovery")
+
+dat_km <- dat1 %>%
   mutate(
-    jin_label = case_when(
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+    group = case_when(
+      jin_status == "nonAKD" ~ "non-AKD",
+      jin_status == "AKD" & `150_210recovery` == 1 ~ "AKD with recovery",
+      jin_status == "AKD" & `150_210recovery` == 2 ~ "AKD without recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "AKD with recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0,2) ~ "AKD without recovery",
       TRUE ~ NA_character_
     ),
-    jin_label    = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
-    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-    time_years   = as.numeric(last_follow_death - index_plus_210) / 365.25,
-    CKD_status = case_when(
-      as.character(CKD_status) %in% c("CKD", "1")     ~ "CKD",
-      as.character(CKD_status) %in% c("nonCKD", "0") ~ "nonCKD",
-      TRUE ~ as.character(CKD_status)
-    ),
-    CKD_status = factor(CKD_status, levels = c("nonCKD", "CKD"))
+    group = factor(group, levels = levels_full),
+    time_years = as.numeric(last_follow_death - index_plus_210)/365.25
   ) %>%
-  filter(!is.na(jin_label), !is.na(time_years), time_years >= 0, !is.na(CKD_status))
+  filter(!is.na(group), !is.na(time_years), time_years >= 0)
 
-# ---- 2) Cox（3群）----
+# ==========================================================
+# Common axis / colors
+# ==========================================================
+ticks_show <- seq(0, 8, by = 2)
+x_right <- 9.5
+x_right_risk <- 8.2
+
+pal <- c(
+  "non-AKD"              = "#95A5A6",
+  "AKD with recovery"    = "#2ECC71",
+  "AKD without recovery" = "#E74C3C"
+)
+
+common_left_margin_pt  <- 80
+common_right_margin_pt <- 80
+
+# ==========================================================
+# KM fit
+# ==========================================================
+fit <- survfit(Surv(time_years, primary_death) ~ group, data = dat_km)
+
+# ==========================================================
+# KM panel (manual CIF)
+# ==========================================================
+s <- summary(fit)
+
+km_df <- data.frame(
+  time   = s$time,
+  surv   = s$surv,
+  lower  = s$lower,
+  upper  = s$upper,
+  strata = s$strata
+) %>%
+  mutate(
+    group = factor(sub("^group=","", strata), levels = levels_full),
+    cif   = 1 - surv,
+    cif_l = 1 - upper,
+    cif_u = 1 - lower
+  ) %>%
+  arrange(group, time)
+
+p_km <- ggplot(km_df, aes(x = time, y = cif, colour = group, fill = group)) +
+  geom_ribbon(aes(ymin = cif_l, ymax = cif_u),
+              alpha = km_ci_alpha, linewidth = 0, show.legend = FALSE) +
+  geom_step(linewidth = km_line_lwd, show.legend = FALSE) +
+  scale_x_continuous(breaks = ticks_show, limits = c(0, x_right), expand = c(0, 0)) +
+  scale_y_continuous(limits = c(0, 0.40), breaks = seq(0, 0.4, 0.1), expand = c(0, 0)) +
+  scale_colour_manual(values = pal, breaks = levels_full) +
+  scale_fill_manual(values = pal, breaks = levels_full) +
+  labs(x = NULL, y = "Cumulative incidence") +
+  theme_classic(base_size = base_fs) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank(),
+    plot.margin  = margin(t = 4, r = common_right_margin_pt, b = 10,   # ★ここ(b)を増やす
+                          l = common_left_margin_pt, unit = "pt")
+  )
+
+# ==========================================================
+# Legend panel (full width above KM)
+# ==========================================================
+leg_df <- tibble(
+  group = factor(levels_full, levels = levels_full),
+  x0 = c(1.2, 10.0, 20.0),
+  y  = 1.10
+) %>%
+  mutate(x1 = x0 + 0.85)
+
+p_leg <- ggplot(leg_df) +
+  geom_rect(aes(xmin = x0, xmax = x1, ymin = y - 0.18, ymax = y + 0.18, fill = group),
+            alpha = 0.25, colour = NA) +
+  geom_segment(aes(x = x0, xend = x1, y = y, yend = y, colour = group),
+               linewidth = 1.1) +
+  geom_text(aes(x = x1 + 0.55, y = y, label = group),
+            hjust = 0, size = leg_text_size) +
+  scale_fill_manual(values = pal, guide = "none") +
+  scale_colour_manual(values = pal, guide = "none") +
+  coord_cartesian(xlim = c(0.5, 30.0), ylim = c(0.6, 1.7), clip = "off") +
+  theme_void(base_size = base_fs) +
+  theme(
+    plot.margin = margin(t = 0, r = common_right_margin_pt, b = 0,
+                         l = common_left_margin_pt, unit = "pt")
+  )
+
+# ==========================================================
+# Number at risk (0-align version)
+#  - x-axis starts at 0 (align with KM)
+#  - group labels drawn OUTSIDE panel (annotation_custom)
+#  - x-axis line moved downward by lowering risk_ylim[1]
+# ==========================================================
+sfit <- summary(fit, times = ticks_show, extend = TRUE)
+
+# ★ 0年の数字は現状維持（動かしたくないならこのまま）
+time0_shift <- 0.22
+
+# ★ riskパネルの下を深くするほど、Yearsの横棒（x軸線）が下に降り、ラベルと重ならない
+risk_ylim <- c(0.18, 0.56)   # ← 下限を 0.28→0.18 に（まずこれ）
+
+# ★ Group名を外に出す量（mm）
+label_pad_mm <- 10           # 8〜14で調整（大きいほど左へ）
+
+risk_df <- data.frame(
+  time   = sfit$time,
+  strata = sfit$strata,
+  n_risk = sfit$n.risk
+) %>%
+  mutate(
+    group = factor(sub("^group=","", strata), levels = levels_full),
+    y = unname(y_map[as.character(group)]),
+    time_plot = ifelse(time == 0, time0_shift, time),
+    group_disp = case_when(
+      as.character(group) == "AKD with recovery"    ~ "AKD with\nrecovery",
+      as.character(group) == "AKD without recovery" ~ "AKD without\nrecovery",
+      TRUE ~ as.character(group)
+    )
+  )
+
+p_risk <- ggplot() +
+  # ---- numbers ----
+geom_text(
+  data = risk_df,
+  aes(x = time_plot, y = y, label = n_risk),
+  size = num_size
+) +
+  scale_x_continuous(
+    breaks = ticks_show,
+    limits = c(0, x_right_risk),     # ★0開始（KMと揃える本体）
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    breaks = sort(unique(risk_df$y)),
+    labels = rep("", length(unique(risk_df$y))),
+    expand = c(0, 0)
+  ) +
+  labs(x = "Years", title = "Number at risk") +
+  theme_classic(base_size = risk_fs) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y  = element_blank(),
+    plot.margin  = margin(t = risk_margin_t, r = common_right_margin_pt,
+                          b = risk_margin_b, l = common_left_margin_pt, unit = "pt"),
+    plot.title.position = "plot",
+    plot.title = element_text(margin = margin(b = risk_title_mb), vjust = 0)
+  ) +
+  coord_cartesian(ylim = risk_ylim, clip = "off")
+
+# ---- add GROUP LABELS outside panel (x=0より左に固定表示) ----
+for (grp in levels_full) {
+  yv  <- unique(risk_df$y[risk_df$group == grp])[1]
+  lab <- unique(risk_df$group_disp[risk_df$group == grp])[1]
+  col <- pal[grp]
+  
+  p_risk <- p_risk +
+    annotation_custom(
+      grob = textGrob(
+        lab,
+        x = unit(0, "npc") - unit(label_pad_mm, "mm"),
+        just = "right",
+        gp = gpar(col = col, fontsize = risk_fs)
+      ),
+      xmin = -Inf, xmax = -Inf, ymin = yv, ymax = yv
+    )
+}
+
+# ==========================================================
+# Bind KM + risk with controlled vertical ratio (compress risk)
+# ==========================================================
+g_km   <- ggplotGrob(p_km)
+g_risk <- ggplotGrob(p_risk)
+
+# hard align widths
+g_risk$widths <- g_km$widths
+
+km_risk_block <- arrangeGrob(
+  g_km, g_risk,
+  ncol = 1,
+  heights = km_vs_risk_heights
+)
+
+# ==========================================================
+# Figure 2 object (KM only) + bottom blank (pack to upper half)
+# ==========================================================
+fig2_onlyKM <- arrangeGrob(
+  textGrob(
+    "Figure 2. Primary Outcome: All-Cause Mortality",
+    x = unit(0.02, "npc"),   # ← 左余白（0.02〜0.05で調整）
+    y = unit(0.95, "npc"),    # ← 上余白（0.9〜0.95で調整）
+    just = c("left", "top"),
+    gp = gpar(fontsize = 14, fontface = "bold")
+  ),
+  p_leg,
+  km_risk_block,
+  nullGrob(),
+  ncol = 1,
+  heights = c(0.10, fig2_heights)  # ← タイトル分を先頭に追加
+)
+
+# ==========================================================
+# Cox → HR table (Table 2 only)
+# ==========================================================
+dat_cox <- dat_km %>%
+  mutate(arb_acei_use = if_else(coalesce(arb,0)==1 | coalesce(acei,0)==1, 1L, 0L))
+
 fit_main <- coxph(
   Surv(time_years, primary_death) ~
-    jin_label + age + index_cre + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
-    CKD_status,
+    group + age + index_cre + arb_acei_use +
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
   data = dat_cox
 )
 
-# ---- 3) 2比較（vs nonAKD）の tidy（1回だけ）----
-td <- broom::tidy(fit_main, exponentiate = TRUE, conf.int = TRUE) %>%
-  filter(term %in% c("jin_labelRecovery", "jin_labelNon-Recovery")) %>%
+hr_table <- broom::tidy(fit_main, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term %in% c("groupAKD with recovery", "groupAKD without recovery")) %>%
   mutate(
-    Contrast = dplyr::recode(
-      term,
-      "jin_labelRecovery"     = "AKD Recovery vs nonAKD",
-      "jin_labelNon-Recovery" = "AKD Non-Recovery vs nonAKD"
-    ),
-    Contrast = factor(Contrast, levels = c("AKD Non-Recovery vs nonAKD", "AKD Recovery vs nonAKD"))
-  )
-
-# ---- 4) HRテーブル（上段）----
-hr_table <- td %>%
-  mutate(
-    HR        = round(estimate, 2),
-    CI_lower  = round(conf.low, 2),
-    CI_upper  = round(conf.high, 2),
-    p_raw     = p.value,
-    `p-value` = ifelse(p_raw < 0.01, "<0.01", sprintf("%.2f", p_raw))
+    Contrast = c("AKD with recovery vs non-AKD",
+                 "AKD without recovery vs non-AKD"),
+    HR = sprintf("%.2f", estimate),
+    `95% CI` = sprintf("%.2f–%.2f", conf.low, conf.high),
+    `p-value` = ifelse(p.value < 0.01, "<0.01", sprintf("%.2f", p.value))
   ) %>%
-  dplyr::select(
-    Contrast,
-    HR,
-    `Lower 95% CI` = CI_lower,
-    `Upper 95% CI` = CI_upper,
-    `p-value`
+  select(Contrast, HR, `95% CI`, `p-value`)
+
+write_csv(hr_table, out_tab2_csv)
+
+hr_grob <- tableGrob(
+  hr_table, rows = NULL,
+  theme = ttheme_default(
+    base_size = hr_fs,
+    core = list(bg_params = list(col = "black", lwd = 0.4)),
+    colhead = list(bg_params = list(col = "black", lwd = 0.6),
+                   fg_params = list(fontface = "bold"))
   )
+)
 
-# ---- 5) フォレスト（下段）----
-p_forest <- ggplot(td, aes(x = Contrast, y = estimate)) +
-  geom_point(size = 2.5) +
-  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 0.7) +
-  geom_hline(yintercept = 1, linetype = "dashed") +
-  coord_flip() +
-  scale_y_log10(
-    name   = "Hazard ratio for all-cause mortality (log scale)",
-    breaks = c(0.5, 1, 2, 3, 4, 7),
-    limits = c(0.5, 7)
-  ) +
-  labs(
-    x = NULL,
-    title = NULL 
-  )+
-  theme_bw(base_size = 11) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.y      = element_text(size = 10),
-    axis.text.x      = element_text(size = 9),
-    plot.title       = element_text(hjust = 0.5, face = "bold"),
-    plot.margin      = margin(t = 5.5, r = 10, b = 5.5, l = 7, unit = "pt")
+# outer border
+hr_grob <- gtable_add_grob(
+  hr_grob,
+  rectGrob(gp = gpar(fill = NA, col = "black", lwd = 1)),
+  t = 1, l = 1, b = nrow(hr_grob), r = ncol(hr_grob)
+)
+
+tab2_onlyHR <- arrangeGrob(
+  textGrob("Table 2. Adjusted hazard ratios for all-cause mortality",
+           x = unit(0, "npc"), just = "left",
+           gp = gpar(fontsize = 12, fontface = "bold")),
+  hr_grob, ncol = 1, heights = c(0.18, 1)
+)
+
+# ==========================================================
+# Draw (optional)
+# ==========================================================
+grid.newpage(); grid.draw(fig2_onlyKM)
+grid.newpage(); grid.draw(tab2_onlyHR)
+
+# ==========================================================
+# SAVE
+# ==========================================================
+ragg::agg_tiff(out_fig2_tif, width = 180, height = 220, units = "mm", res = 600, compression = "lzw")
+grid.newpage(); grid.draw(fig2_onlyKM); dev.off()
+
+pdf(out_fig2_pdf, width = 7.8, height = 8.4)
+grid.newpage(); grid.draw(fig2_onlyKM); dev.off()
+
+ragg::agg_tiff(out_tab2_tif, width = 180, height = 120, units = "mm", res = 600, compression = "lzw")
+grid.newpage(); grid.draw(tab2_onlyHR); dev.off()
+
+pdf(out_tab2_pdf, width = 7.8, height = 4.6)
+grid.newpage(); grid.draw(tab2_onlyHR); dev.off()
+
+############################################################
+# Quick knobs:
+#  - pack figure up: fig2_heights = c(legend, km+risk, blank) -> increase blank
+#  - shrink risk panel: km_vs_risk_heights -> make 2nd smaller
+#  - risk row spacing: y_map values closer together
+#  - title-to-table: risk_ylim upper (smaller -> closer)
+############################################################
+
+# ==========================================================
+# Table 2 を Word（docx）でも保存（officer + flextable）
+#  - タイトル行 + 罫線付きテーブル
+#  - 1ページに収まりやすいように余白/フォント/幅を調整
+# ==========================================================
+pkgs2 <- c("officer","flextable")
+to_install2 <- pkgs2[!vapply(pkgs2, requireNamespace, logical(1), quietly = TRUE)]
+if (length(to_install2) > 0) install.packages(to_install2, dependencies = TRUE)
+
+library(officer)
+library(flextable)
+
+out_tab2_docx <- file.path(out_dir, "Table2_primary_HR.docx")
+
+# ---- flextable化（列幅/罫線/文字などを整える）----
+ft <- flextable(hr_table)
+
+ft <- ft %>%
+  theme_booktabs() %>%               # すっきりした罫線（好みで theme_vanilla() でもOK）
+  bold(part = "header") %>%
+  align(align = "left", part = "all") %>%
+  align(j = c("HR","95% CI","p-value"), align = "center", part = "all") %>%
+  autofit()
+
+# 列幅を固定（A4縦で読みやすい目安。必要なら微調整）
+ft <- width(ft, j = "Contrast", width = 3.6)
+ft <- width(ft, j = "HR",       width = 1.0)
+ft <- width(ft, j = "95% CI",   width = 1.6)
+ft <- width(ft, j = "p-value",  width = 1.0)
+
+# フォントサイズ
+ft <- fontsize(ft, size = 11, part = "all")
+
+# 外枠を強めに（TableGrobの“外枠”相当）
+outer <- fp_border(color = "black", width = 1)
+inner <- fp_border(color = "black", width = 0.5)
+ft <- border_remove(ft)
+ft <- border_outer(ft, border = outer)
+ft <- border_inner_h(ft, border = inner)
+ft <- border_inner_v(ft, border = inner)
+
+# ---- Word作成：ページ余白を少し詰めて縦1枚に収めやすく ----
+doc <- read_docx()
+
+# セクション（A4縦・余白調整）
+sec <- prop_section(
+  page_size = page_size(width = 8.27, height = 11.69),     # A4 (inch)
+  page_margins = page_mar(
+    top = 0.6, bottom = 0.6, left = 0.7, right = 0.7       # inch
   )
-
-# ---- 6) 表を grob 化して「表タイトル + テーブル」にする ----
-table_theme <- gridExtra::ttheme_minimal(
-  core = list(fontsize = 12, padding = unit(c(2, 2), "mm")),
-  colhead = list(fontsize = 12, fontface = "bold", padding = unit(c(2, 2), "mm"))
 )
 
-table_grob <- gridExtra::tableGrob(
-  hr_table,
-  rows  = NULL,
-  theme = table_theme
-)
+doc <- doc %>%
+  body_add_par("Table 2. Adjusted hazard ratios for all-cause mortality",
+               style = "heading 2") %>%
+  body_add_flextable(ft) %>%
+  body_add_par("", style = "Normal") %>%
+  body_end_section_continuous() %>%
+  body_set_default_section(sec)
 
-# ★ 追加：テーブルタイトル（表の上）
-table_title <- grid::textGrob(
-  "Adjusted hazard ratios for all-cause mortality (Cox proportional hazards model)",
-  x = unit(0, "npc"),  # 左寄せ
-  just = c("left", "top"),
-  gp = grid::gpar(fontsize = 12, fontface = "bold")
-)
+print(doc, target = out_tab2_docx)
 
-# タイトル＋テーブルを縦に結合（タイトルは小さめの高さ）
-table_block <- gridExtra::arrangeGrob(
-  table_title,
-  table_grob,
-  ncol = 1,
-  heights = c(0.20, 1)
-)
-
-# ---- 7) 「表ブロック + フォレスト」を縦に並べる ----
-combined <- gridExtra::arrangeGrob(
-  table_block,   # ← ここが table_grob から置き換わる
-  p_forest,
-  ncol    = 1,
-  heights = c(1, 2)
-)
-
-# ---- 8) 保存（TIFF + check PDF）----
-out_tif <- "X:/R/Figure2B_forest_with_table_death_akd_3groups.tif"
-out_pdf <- "X:/R/Figure2B_forest_with_table_death_akd_3groups_check.pdf"
-
-# TIFF（Cairoの不安定さ回避のため ragg 推奨）
-if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-ragg::agg_tiff(filename = out_tif, width = 160, height = 140, units = "mm", res = 600, compression = "lzw")
-grid::grid.newpage()
-grid::grid.draw(combined)
-dev.off()
-
-# PDF（確認用）
-pdf(out_pdf, width = 7, height = 6)
-grid::grid.draw(combined)
-dev.off()
-
-}
-#本解析primaryまとめ
+} #本解析
 {
-# =========================
-# Figure 2: remove original plot titles, add (A)/(B) labels + subtitles
-# p_death (ggsurvplot) and combined (Cox table+forest grob) are assumed to exist
-# =========================
+############################################################
+# Figure 4 (Sensitivity)  --- ONE-PASS COPY-PASTE ---
+# Layout is IDENTICAL to Primary Figure 2 code:
+#  - Figure4: Legend + KM(CIF+CI) + Number at risk (packed to upper half)
+#  - HR table saved separately (bordered) + CSV  (like Table 2 in primary)
+# Output folder: X:/R/sensitivity_analysis/
+############################################################
 
-library(grid)
-library(gridExtra)
-library(ggplot2)
+graphics.off()
 
-# ---- 0) Figure2A：KM曲線側の「元タイトル」を削除 ----
-# ggsurvplotは list なので $plot に対して theme() を当てる
-p_death2 <- p_death
-p_death2$plot <- p_death2$plot + theme(plot.title = element_blank())
+# --------------------------
+# Packages
+# --------------------------
+pkgs <- c("readr","dplyr","survival","broom","ggplot2",
+          "grid","gridExtra","gtable","tibble","ragg")
+to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
 
-# （任意）risk table 側も余計なタイトル等がある場合に備えて
-if (!is.null(p_death2$table)) {
-  p_death2$table <- p_death2$table + theme(plot.title = element_blank())
-}
+library(readr); library(dplyr); library(survival); library(broom); library(ggplot2)
+library(grid); library(gridExtra); library(gtable); library(tibble)
 
-# ---- 1) Figure 2A（KM + risk table）に (A) ラベル＋サブタイトル ----
-km_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(A) Cumulative incidence of all-cause death",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  gridExtra::arrangeGrob(
-    p_death2$plot,
-    p_death2$table,
-    ncol = 1,
-    heights = c(3, 1)
-  ),
-  ncol = 1,
-  heights = c(0.08, 1)
+# ==========================================================
+# TUNING (★primaryと同じ思想：ここだけ調整すればOK)
+# ==========================================================
+base_fs <- 10
+risk_fs <- 11
+hr_fs   <- 11
+
+km_line_lwd <- 1.05
+km_ci_alpha <- 0.18
+
+num_size <- 3.6
+leg_text_size <- 3.2
+
+# ---- Risk row spacing (fixed y: primaryと同じ) ----
+y_map <- c(
+  "nonAKD"        = 0.50,
+  "Recovery"      = 0.40,
+  "Non-Recovery"  = 0.30
 )
 
-# ---- 2) Figure 2B（Cox：table + forest）に (B) ラベル＋サブタイトル ----
-# ※ Coxの下段フォレストの元タイトルを消した combined を使うのが前提です
-#    もし combined の中身が古くてタイトルが残る場合は、p_forest を title=NULL で作り直して combined も作り直してください
-# ---- 7) 「表ブロック + フォレスト」を縦に並べる ----
-combined_without_title <- gridExtra::arrangeGrob(
-  table_grob,   # ← ここが table_grob から置き換わる
-  p_forest,
-  ncol    = 1,
-  heights = c(1, 2)
-)
+# ---- Risk title spacing ----
+risk_title_mb <- 2
+risk_margin_t <- 10
+risk_margin_b <- 2
 
-cox_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(B) Adjusted hazard ratios for all-cause mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  combined_without_title,
-  ncol = 1,
-  heights = c(0.08, 1)
-)
-# ---- 3') Figure全体タイトルを追加して上下に結合 ----
-fig2_AB_labeled <- gridExtra::arrangeGrob(
-  # ★ Figure全体タイトル
-  grid::textGrob(
-    "Figure 2. All-cause mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 14, fontface = "bold")
-  ),
-  
-  # (A) + (B) 本体
-  gridExtra::arrangeGrob(
-    km_with_label,
-    cox_with_label,
-    ncol = 1,
-    heights = c(1.2, 1.0)
-  ),
-  
-  ncol = 1,
-  heights = c(0.06, 1)   # ← タイトル分の高さ
-)
+# ---- Risk panel view window ----
+risk_ylim <- c(0.18, 0.56)
 
-# ---- 4) 保存 ----
-out_tif <- "X:/R/Figure2_combined_vertical_labeled.tif"
-out_pdf <- "X:/R/Figure2_combined_vertical_labeled_check.pdf"
+# ---- KM vs Risk height ratio ----
+km_vs_risk_heights <- c(2.00, 1.30)
 
-if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-ragg::agg_tiff(
-  filename = out_tif,
-  width = 180,
-  height = 300,
-  units = "mm",
-  res = 600,
-  compression = "lzw"
-)
-grid::grid.newpage()
-grid::grid.draw(fig2_AB_labeled)
-dev.off()
+# ---- Pack whole Figure4 to upper half + big blank bottom ----
+fig4_heights <- c(0.32, 4.40, 1.20)  # (legend, KM+risk, bottom blank)
 
-pdf(out_pdf, width = 7.1, height = 11.5)
-grid::grid.draw(fig2_AB_labeled)
-dev.off()
-}
-
-#感度分析を行うのに必要なcodeのみ####
-#感度分析死亡のカプランマイヤー####
-#データ整形
-jin1_Eligibile_sens <- jin1_Eligibile_unique_id %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
-  mutate(
-    group = case_when(
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ NA_character_,  # 除外対象をNAに
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
-      TRUE ~ NA_character_
-    ),
-    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-    group = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery")), 
-    time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
-  ) %>%
-  filter(!is.na(group), time_years >= 0)
-
-# モデル作成、グラフ（死亡）
-library(survival)
-library(survminer)
-library(ggplot2)
-
-fit_death_sens <- survfit(Surv(time_years, primary_death) ~ group,
-                          data = jin1_Eligibile_sens)
-
-p_death_sens <- ggsurvplot(
-  fit_death_sens,
-  data        = jin1_Eligibile_sens,
-  fun         = "event",                     # 1 - survival（累積死亡率）
-  pval        = TRUE,
-  conf.int    = TRUE,
-  risk.table  = TRUE,
-  xlim        = c(0, 9.5),                    # 10年まで表示
-  ylim        = c(0, 0.4),
-  title       = "Cumulative incidence of all-cause death\n(Sensitivity analysis)",
-  xlab        = "Years",
-  ylab        = "Cumulative incidence",
-  break.time.by = 2,
-  legend.title  = "Group",
-  legend.labs   = c("nonAKD", "Recovery", "Non-Recovery")  # 必要に応じて
-)
-# 必要なら作業ディレクトリを指定
+# ==========================================================
+# Paths (★sensitivity_analysis folder)
+# ==========================================================
 setwd("X:/R")
-tiff(
-  filename   = "Figure4A_death_KM_sensitivity.tiff",
-  width      = 7.1,   # inch（約180 mm）
-  height     = 6.0,   # inch（適宜調整）
-  units      = "in",
-  res        = 600,
-  compression = "lzw",
-  type       = "cairo"   # ← これが CairoTIFF の代わり
-)
+in_csv <- "jin1_Eligibile.csv"
 
-print(p_death_sens)      # カーブ + リスクテーブルをまとめて出力
+out_dir <- file.path("X:/R","sensitivity_analysis")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-dev.off()
+out_fig4_tif <- file.path(out_dir,"Figure4_sensitivity_KM.tif")
+out_fig4_pdf <- file.path(out_dir,"Figure4_sensitivity_KM.pdf")
 
-}
-# ============================================================
-# Figure 2 (ONE-PASTE): Primary Outcome: All-Cause Mortality
-#  - (A) KM (event) + risk table
-#  - (B) Cox HR table + forest
-#  - Labels: nonAKD / AKD with Recovery / AKD without Recovery
-#  - Figure title: "Figure 2. Primary Outcome: All-Cause Mortality"
-#  - Assumes: jin1_Eligibile.csv exists in X:/R
-# ============================================================
+out_tab4_tif <- file.path(out_dir,"Table_3_sensitivity_HR.tif")
+out_tab4_pdf <- file.path(out_dir,"Table_3_sensitivity_HR.pdf")
+out_tab4_csv <- file.path(out_dir,"Table_3_sensitivity_HR.csv")
 
-library(readr)
-library(dplyr)
-library(survival)
-library(survminer)
-library(broom)
-library(ggplot2)
-library(grid)
-library(gridExtra)
+# ==========================================================
+# Load & build 1 row per patient (primaryと同じ)
+# ==========================================================
+jin1_Eligibile <- read_csv(in_csv, locale = locale(encoding = "SHIFT-JIS"))
 
-setwd("X:/R")
-
-# ----------------------------
-# 0) Load data
-# ----------------------------
-jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
-
-# ----------------------------
-# 1) Make 1-row-per-id dataset (analysis cohort)
-# ----------------------------
 dat1 <- jin1_Eligibile %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+  filter(exclude == "include", jin_status %in% c("AKD","nonAKD")) %>%
   group_by(id) %>%
   arrange(index_date, date, .by_group = TRUE) %>%
   slice(1) %>%
-  ungroup() %>%
-  mutate(
-    # 3-group label for plotting / models
-    jin_label = case_when(
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
-      TRUE ~ NA_character_
-    ),
-    jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
-    
-    # follow-up time (years)
-    time_years = as.numeric(last_follow_death - index_plus_210) / 365.25,
-    
-    # CKD_status harmonization (if needed)
-    CKD_status = case_when(
-      as.character(CKD_status) %in% c("CKD", "1")     ~ "CKD",
-      as.character(CKD_status) %in% c("nonCKD", "0") ~ "nonCKD",
-      TRUE ~ as.character(CKD_status)
-    ),
-    CKD_status = factor(CKD_status, levels = c("nonCKD", "CKD")),
-    
-    # RASi (ARB/ACEi) combined
-    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L)
-  ) %>%
-  filter(!is.na(jin_label), !is.na(time_years), time_years >= 0)
+  ungroup()
 
-# ----------------------------
-# 2) (A) Kaplan–Meier (event = cumulative incidence)
-# ----------------------------
-fit_death <- survfit(Surv(time_years, primary_death) ~ jin_label, data = dat1)
+levels_full <- c("nonAKD", "Recovery", "Non-Recovery")
 
-p_death <- ggsurvplot(
-  fit_death,
-  data         = dat1,
-  fun          = "event",
-  pval         = TRUE,
-  conf.int     = TRUE,
-  risk.table   = TRUE,
-  xlim         = c(0, 9.5),
-  ylim         = c(0, 0.4),
-  title        = NULL,
-  xlab         = "Years",
-  ylab         = "Cumulative incidence",
-  break.time.by = 2,
-  legend.title = "Group",
-  legend.labs  = c("nonAKD", "AKD with Recovery", "AKD without Recovery")
-)
-
-# remove any internal plot titles (safety)
-p_death2 <- p_death
-p_death2$plot  <- p_death2$plot  + theme(plot.title = element_blank())
-if (!is.null(p_death2$table)) p_death2$table <- p_death2$table + theme(plot.title = element_blank())
-
-km_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(A) Cumulative incidence of all-cause death",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  gridExtra::arrangeGrob(
-    p_death2$plot,
-    p_death2$table,
-    ncol = 1,
-    heights = c(3, 1)
-  ),
-  ncol = 1,
-  heights = c(0.08, 1)
-)
-
-# ----------------------------
-# 3) (B) Cox model + HR table + forest
-# ----------------------------
-fit_main <- coxph(
-  Surv(time_years, primary_death) ~
-    jin_label + age + index_cre + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
-    CKD_status,
-  data = dat1 %>% filter(!is.na(CKD_status))
-)
-
-td <- broom::tidy(fit_main, exponentiate = TRUE, conf.int = TRUE) %>%
-  filter(term %in% c("jin_labelRecovery", "jin_labelNon-Recovery")) %>%
-  mutate(
-    Contrast = dplyr::recode(
-      term,
-      "jin_labelRecovery"     = "AKD with Recovery vs nonAKD",
-      "jin_labelNon-Recovery" = "AKD without Recovery vs nonAKD"
-    ),
-    Contrast = factor(
-      Contrast,
-      levels = c("AKD without Recovery vs nonAKD", "AKD with Recovery vs nonAKD")
-    )
-  )
-
-hr_table <- td %>%
-  mutate(
-    HR        = round(estimate, 2),
-    CI_lower  = round(conf.low, 2),
-    CI_upper  = round(conf.high, 2),
-    p_raw     = p.value,
-    `p-value` = ifelse(p_raw < 0.01, "<0.01", sprintf("%.2f", p_raw))
-  ) %>%
-  select(
-    Contrast,
-    HR,
-    `Lower 95% CI` = CI_lower,
-    `Upper 95% CI` = CI_upper,
-    `p-value`
-  )
-
-p_forest <- ggplot(td, aes(x = Contrast, y = estimate)) +
-  geom_point(size = 2.5) +
-  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 0.7) +
-  geom_hline(yintercept = 1, linetype = "dashed") +
-  coord_flip() +
-  scale_y_log10(
-    name   = "Hazard ratio for all-cause mortality (log scale)",
-    breaks = c(0.5, 1, 2, 3, 4, 7),
-    limits = c(0.5, 7)
-  ) +
-  labs(x = NULL, title = NULL) +
-  theme_bw(base_size = 11) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.y      = element_text(size = 10),
-    axis.text.x      = element_text(size = 9),
-    plot.margin      = margin(t = 5.5, r = 10, b = 5.5, l = 7, unit = "pt")
-  )
-
-table_theme <- gridExtra::ttheme_minimal(
-  core = list(fontsize = 12, padding = unit(c(2, 2), "mm")),
-  colhead = list(fontsize = 12, fontface = "bold", padding = unit(c(2, 2), "mm"))
-)
-
-table_grob <- gridExtra::tableGrob(
-  hr_table,
-  rows  = NULL,
-  theme = table_theme
-)
-
-# (B) block (table + forest)
-combined_B <- gridExtra::arrangeGrob(
-  table_grob,
-  p_forest,
-  ncol    = 1,
-  heights = c(1, 2)
-)
-
-cox_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(B) Adjusted hazard ratios for all-cause mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  combined_B,
-  ncol = 1,
-  heights = c(0.08, 1)
-)
-
-# ----------------------------
-# 4) Combine A + B with FIGURE title
-# ----------------------------
-fig2_AB_labeled <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "Figure 2. Primary Outcome: All-Cause Mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 14, fontface = "bold")
-  ),
-  gridExtra::arrangeGrob(
-    km_with_label,
-    cox_with_label,
-    ncol = 1,
-    heights = c(1.2, 1.0)
-  ),
-  ncol = 1,
-  heights = c(0.06, 1)
-)
-
-# ----------------------------
-# 5) Save (TIFF + PDF check)
-# ----------------------------
-out_tif <- "X:/R/Figure2_combined_vertical_labeled.tif"
-out_pdf <- "X:/R/Figure2_combined_vertical_labeled_check.pdf"
-
-if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-
-ragg::agg_tiff(
-  filename = out_tif,
-  width = 180,
-  height = 300,
-  units = "mm",
-  res = 600,
-  compression = "lzw"
-)
-grid::grid.newpage()
-grid::grid.draw(fig2_AB_labeled)
-dev.off()
-
-pdf(out_pdf, width = 7.1, height = 11.5)
-grid::grid.draw(fig2_AB_labeled)
-dev.off()
-
-# optional preview
-grid::grid.newpage()
-grid::grid.draw(fig2_AB_labeled)
-
-
-
-#感度分析cox比例ハザード#####
-{
-# =========================
-# Sensitivity analysis (Death): Cox PH + Forest with HR table (group 3-level)
-# Output: Figure4B_forest_with_table_death_akd_3groups_sensitivity.tif (+ check PDF)
-# =========================
-
-library(dplyr)
-library(survival)
-library(broom)
-library(ggplot2)
-library(gridExtra)
-library(grid)
-
-# ---- 0) Safety: CKD_status ref を nonCKD に固定（本解析と揃える）----
-# ※ すでに整形済みならこのmutateは同じ結果になります
-jin1_Eligibile_sens <- jin1_Eligibile_sens %>%
-  mutate(
-    CKD_status = case_when(
-      as.character(CKD_status) %in% c("CKD", "1")     ~ "CKD",
-      as.character(CKD_status) %in% c("nonCKD", "0") ~ "nonCKD",
-      TRUE ~ as.character(CKD_status)
-    ),
-    CKD_status = factor(CKD_status, levels = c("nonCKD", "CKD"))
-  ) %>%
-  filter(!is.na(CKD_status))
-
-# ---- 1) Cox model（感度分析：group, ref=nonAKD）----
-dat_sens <- jin1_Eligibile_sens %>%
-  mutate(group = relevel(group, ref = "nonAKD")) %>%
-  droplevels()
-
-fit_sens <- coxph(
-  Surv(time_years, primary_death) ~
-    group + age + index_cre + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
-    CKD_status,
-  data = dat_sens
-)
-
-# ---- 2) Figure作成関数（引数名は fit で統一）----
-make_forest_with_table_2contrast_group <- function(fit,
-                                                   out_tif,
-                                                   out_pdf,
-                                                   width_mm = 160,
-                                                   height_mm = 140,
-                                                   res_dpi = 600,
-                                                   hr_limits = c(0.5, 7),
-                                                   hr_breaks = c(0.5, 1, 2, 3, 4, 7),
-                                                   title_txt = "Sensitivity analysis: Adjusted hazard ratios for all-cause mortality\n(AKD groups vs nonAKD)") {
-  
-  # group係数が推定されているかチェック
-  cf <- names(coef(fit))
-  if (!any(grepl("^group", cf))) {
-    stop("This Cox model does not contain estimated terms starting with 'group'.\nCheck that the model formula includes 'group' and that group has >=2 levels.")
-  }
-  
-  # tidy（1回だけ）
-  td <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
-  
-  # nonAKD基準の2比較
-  target_terms <- c("groupRecovery", "groupNon-Recovery")
-  target_terms <- target_terms[target_terms %in% td$term]
-  if (length(target_terms) == 0) {
-    stop("No target terms (groupRecovery / groupNon-Recovery) found in broom::tidy(fit).\nPossible causes: only one group level remains or no events in a group.")
-  }
-  
-  td2 <- td %>%
-    filter(term %in% target_terms) %>%
-    mutate(
-      Contrast = dplyr::recode(
-        term,
-        "groupRecovery"     = "AKD Recovery vs nonAKD",
-        "groupNon-Recovery" = "AKD Non-Recovery vs nonAKD",
-        .default = term
-      ),
-      Contrast = factor(Contrast, levels = c("AKD Non-Recovery vs nonAKD", "AKD Recovery vs nonAKD"))
-    )
-  
-  # HRテーブル
-  hr_table <- td2 %>%
-    mutate(
-      HR        = round(estimate, 2),
-      CI_lower  = round(conf.low, 2),
-      CI_upper  = round(conf.high, 2),
-      p_raw     = p.value,
-      `p-value` = ifelse(p_raw < 0.01, "<0.01", sprintf("%.2f", p_raw))
-    ) %>%
-    dplyr::select(
-      Contrast,
-      HR,
-      `Lower 95% CI` = CI_lower,
-      `Upper 95% CI` = CI_upper,
-      `p-value`
-    )
-  
-  # フォレスト
-  p_forest <- ggplot(td2, aes(x = Contrast, y = estimate)) +
-    geom_point(size = 2.5) +
-    geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 0.7) +
-    geom_hline(yintercept = 1, linetype = "dashed") +
-    coord_flip() +
-    scale_y_log10(
-      name   = "Hazard ratio for all-cause mortality (log scale)",
-      breaks = hr_breaks,
-      limits = hr_limits
-    ) +
-    labs(x = NULL, title = title_txt) +
-    theme_bw(base_size = 11) +
-    theme(
-      panel.grid.minor = element_blank(),
-      axis.text.y      = element_text(size = 10),
-      axis.text.x      = element_text(size = 9),
-      plot.title       = element_text(hjust = 0.5, face = "bold"),
-      plot.margin      = margin(t = 5.5, r = 10, b = 5.5, l = 7, unit = "pt")
-    )
-  
-  # tableGrob + 結合
-  table_theme <- gridExtra::ttheme_minimal(
-    core = list(fontsize = 9, padding = unit(c(2, 2), "mm")),
-    colhead = list(fontsize = 9, fontface = "bold", padding = unit(c(2, 2), "mm"))
-  )
-  table_grob <- gridExtra::tableGrob(hr_table, rows = NULL, theme = table_theme)
-  
-  combined <- gridExtra::arrangeGrob(
-    table_grob,
-    p_forest,
-    ncol = 1,
-    heights = c(1, 2)
-  )
-  
-  # 保存：TIFFは ragg（安定）
-  if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-  ragg::agg_tiff(
-    filename = out_tif,
-    width = width_mm, height = height_mm, units = "mm",
-    res = res_dpi,
-    compression = "lzw"
-  )
-  grid::grid.newpage()
-  grid::grid.draw(combined)
-  dev.off()
-  
-  # PDF（確認用）
-  pdf(out_pdf, width = 7, height = 6)
-  grid::grid.draw(combined)
-  dev.off()
-  
-  invisible(list(hr_table = hr_table, forest = p_forest, combined = combined))
-}
-
-# ---- 3) 実行：Figure4B を出力（fitの衝突なし）----
-make_forest_with_table_2contrast_group(
-  fit = fit_sens,
-  out_tif = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity.tif",
-  out_pdf = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity_check.pdf",
-  title_txt = "Sensitivity analysis: Adjusted hazard ratios for all-cause mortality\n(AKD groups vs nonAKD)"
-)
-}
-#感度分析まとめ
-  # ============================================================
-  # Figure 4 (Sensitivity: All-Cause Mortality) - ONE PASTE
-  #  (A) KM + risk table
-  #  (B) Cox HR table + forest
-  #  - Labels: nonAKD / AKD with Recovery / AKD without Recovery
-  #  - Figure title: "Figure 4. Sensitivity Analyses: All-Cause Mortality"
-  #  - Keep (A)/(B); remove "(sensitivity analysis)" from subtitles
-  #
-  # Assumes these objects already exist in your session:
-  #   - jin1_Eligibile_sens   (sensitivity dataset; must include: group, time_years, primary_death, age, index_cre, arb_acei_use, dn*, CKD_status)
-  #   - p_death_sens          (ggsurvplot object for KM in sensitivity analysis)
-  # ============================================================
-  
-  library(dplyr)
-  library(survival)
-  library(broom)
-  library(ggplot2)
-  library(gridExtra)
-  library(grid)
-
-library(grid)
-library(gridExtra)
-library(ggplot2)
-  
-#感度分析を行うのに必要なcodeのみ####
- #感度分析死亡のカプランマイヤー####
-  #データ整形
-  jin1_Eligibile_sens <- jin1_Eligibile_unique_id %>%
-    filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
-    mutate(
-      group = case_when(
-        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ NA_character_,  # 除外対象をNAに
-        jin_status == "nonAKD" ~ "nonAKD",
-        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
-        TRUE ~ NA_character_
-      ),
-      arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-      group = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery")), 
-      time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
-    ) %>%
-    filter(!is.na(group), time_years >= 0)
-  
-  # モデル作成、グラフ（死亡）
-  library(survival)
-  library(survminer)
-  library(ggplot2)
-  
-  fit_death_sens <- survfit(Surv(time_years, primary_death) ~ group,
-                            data = jin1_Eligibile_sens)
-  
-  p_death_sens <- ggsurvplot(
-    fit_death_sens,
-    data        = jin1_Eligibile_sens,
-    fun         = "event",                     # 1 - survival（累積死亡率）
-    pval        = TRUE,
-    conf.int    = TRUE,
-    risk.table  = TRUE,
-    xlim        = c(0, 9.5),                    # 10年まで表示
-    ylim        = c(0, 0.4),
-    title       = "Cumulative incidence of all-cause death\n(Sensitivity analysis)",
-    xlab        = "Years",
-    ylab        = "Cumulative incidence",
-    break.time.by = 2,
-    legend.title  = "Group",
-    legend.labs   = c("nonAKD", "Recovery", "Non-Recovery")  # 必要に応じて
-  )
-  # 必要なら作業ディレクトリを指定
-  setwd("X:/R")
-  tiff(
-    filename   = "Figure4A_death_KM_sensitivity.tiff",
-    width      = 7.1,   # inch（約180 mm）
-    height     = 6.0,   # inch（適宜調整）
-    units      = "in",
-    res        = 600,
-    compression = "lzw",
-    type       = "cairo"   # ← これが CairoTIFF の代わり
-  )
-  
-  print(p_death_sens)      # カーブ + リスクテーブルをまとめて出力
-  
-  dev.off()
-
-  
-  # ---- 0) Safety: CKD_status ref fixed to nonCKD ----
-  jin1_Eligibile_sens <- jin1_Eligibile_sens %>%
-    mutate(
-      CKD_status = case_when(
-        as.character(CKD_status) %in% c("CKD", "1")     ~ "CKD",
-        as.character(CKD_status) %in% c("nonCKD", "0") ~ "nonCKD",
-        TRUE ~ as.character(CKD_status)
-      ),
-      CKD_status = factor(CKD_status, levels = c("nonCKD", "CKD"))
-    ) %>%
-    filter(!is.na(CKD_status))
-  
-  # ---- 1) Cox model（Sensitivity: ref=nonAKD）----
-  dat_sens <- jin1_Eligibile_sens %>%
-    mutate(group = relevel(as.factor(group), ref = "nonAKD")) %>%
-    droplevels()
-  
-  fit_sens <- coxph(
-    Surv(time_years, primary_death) ~
-      group + age + index_cre + arb_acei_use +
-      dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
-      CKD_status,
-    data = dat_sens
-  )
-  
-  # ---- 2) Define function (IMPORTANT: define BEFORE calling) ----
-  make_forest_with_table_2contrast_group <- function(fit,
-                                                     out_tif,
-                                                     out_pdf,
-                                                     width_mm = 160,
-                                                     height_mm = 140,
-                                                     res_dpi = 600,
-                                                     hr_limits = c(0.5, 7),
-                                                     hr_breaks = c(0.5, 1, 2, 3, 4, 7),
-                                                     title_txt = NULL) {
-    
-    td <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
-    
-    # expected terms from group factor (default: groupRecovery / groupNon-Recovery)
-    target_terms <- c("groupRecovery", "groupNon-Recovery")
-    target_terms <- target_terms[target_terms %in% td$term]
-    if (length(target_terms) == 0) {
-      stop("No target terms found. Available terms include:\n",
-           paste(td$term, collapse = ", "),
-           "\nCheck group levels and hyphen/spaces in level names.")
-    }
-    
-    td2 <- td %>%
-      filter(term %in% target_terms) %>%
-      mutate(
-        Contrast = dplyr::recode(
-          term,
-          "groupRecovery"     = "AKD with Recovery vs nonAKD",
-          "groupNon-Recovery" = "AKD without Recovery vs nonAKD",
-          .default = term
-        ),
-        Contrast = factor(
-          Contrast,
-          levels = c("AKD without Recovery vs nonAKD", "AKD with Recovery vs nonAKD")
-        )
-      )
-    
-    hr_table <- td2 %>%
-      mutate(
-        HR        = round(estimate, 2),
-        CI_lower  = round(conf.low, 2),
-        CI_upper  = round(conf.high, 2),
-        p_raw     = p.value,
-        `p-value` = ifelse(p_raw < 0.01, "<0.01", sprintf("%.2f", p_raw))
-      ) %>%
-      dplyr::select(
-        Contrast,
-        HR,
-        `Lower 95% CI` = CI_lower,
-        `Upper 95% CI` = CI_upper,
-        `p-value`
-      )
-    
-    p_forest <- ggplot(td2, aes(x = Contrast, y = estimate)) +
-      geom_point(size = 2.5) +
-      geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 0.7) +
-      geom_hline(yintercept = 1, linetype = "dashed") +
-      coord_flip() +
-      scale_y_log10(
-        name   = "Hazard ratio for all-cause mortality (log scale)",
-        breaks = hr_breaks,
-        limits = hr_limits
-      ) +
-      labs(x = NULL, title = title_txt) +
-      theme_bw(base_size = 11) +
-      theme(
-        panel.grid.minor = element_blank(),
-        axis.text.y      = element_text(size = 10),
-        axis.text.x      = element_text(size = 9),
-        plot.title       = element_text(hjust = 0.5, face = "bold"),
-        plot.margin      = margin(t = 5.5, r = 10, b = 5.5, l = 7, unit = "pt")
-      )
-    
-    table_theme <- gridExtra::ttheme_minimal(
-      core = list(fontsize = 9, padding = unit(c(2, 2), "mm")),
-      colhead = list(fontsize = 9, fontface = "bold", padding = unit(c(2, 2), "mm"))
-    )
-    table_grob <- gridExtra::tableGrob(hr_table, rows = NULL, theme = table_theme)
-    
-    combined <- gridExtra::arrangeGrob(
-      table_grob,
-      p_forest,
-      ncol = 1,
-      heights = c(1, 2)
-    )
-    
-    # Save standalone panel (optional but keeps your original behavior)
-    if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-    ragg::agg_tiff(filename = out_tif, width = width_mm, height = height_mm, units = "mm",
-                   res = res_dpi, compression = "lzw")
-    grid::grid.newpage(); grid::grid.draw(combined); dev.off()
-    
-    pdf(out_pdf, width = 7, height = 6)
-    grid::grid.draw(combined)
-    dev.off()
-    
-    invisible(list(hr_table = hr_table, forest = p_forest, combined = combined))
-  }
-  
-  # ---- 3) Create Figure4B grob (no forest title) ----
-  res4B <- make_forest_with_table_2contrast_group(
-    fit = fit_sens,
-    out_tif = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity.tif",
-    out_pdf = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity_check.pdf",
-    title_txt = NULL
-  )
-  cox4B_grob <- res4B$combined
-  
-  # ---- 4) Figure4A: remove internal titles + fix legend labels ----
-  p_death_sens2 <- p_death_sens
-  p_death_sens2$plot  <- p_death_sens2$plot  + theme(plot.title = element_blank())
-  if (!is.null(p_death_sens2$table)) p_death_sens2$table <- p_death_sens2$table + theme(plot.title = element_blank())
-  
-  # Update legend labels (works for survminer ggplot objects)
-  p_death_sens2$plot <- p_death_sens2$plot +
-    scale_color_discrete(labels = c("nonAKD", "AKD with Recovery", "AKD without Recovery")) +
-    scale_fill_discrete(labels  = c("nonAKD", "AKD with Recovery", "AKD without Recovery"))
-  
-  # ---- 5) Panel labels ----
-  km4A_with_label <- gridExtra::arrangeGrob(
-    grid::textGrob(
-      "(A) Cumulative incidence of all-cause death",
-      x = unit(0, "npc"), y = unit(1, "npc"),
-      just = c("left", "top"),
-      gp = grid::gpar(fontsize = 12, fontface = "bold")
-    ),
-    gridExtra::arrangeGrob(
-      p_death_sens2$plot,
-      p_death_sens2$table,
-      ncol = 1,
-      heights = c(3, 1)
-    ),
-    ncol = 1,
-    heights = c(0.08, 1)
-  )
-  
-  cox4B_with_label <- gridExtra::arrangeGrob(
-    grid::textGrob(
-      "(B) Adjusted hazard ratios for all-cause mortality",
-      x = unit(0, "npc"), y = unit(1, "npc"),
-      just = c("left", "top"),
-      gp = grid::gpar(fontsize = 12, fontface = "bold")
-    ),
-    cox4B_grob,
-    ncol = 1,
-    heights = c(0.08, 1)
-  )
-  
-  # ---- 6) Figure title + combine A/B ----
-  fig4_AB_labeled <- gridExtra::arrangeGrob(
-    grid::textGrob(
-      "Figure 4. Sensitivity Analyses: All-Cause Mortality",
-      x = unit(0, "npc"), y = unit(1, "npc"),
-      just = c("left", "top"),
-      gp = grid::gpar(fontsize = 14, fontface = "bold")
-    ),
-    gridExtra::arrangeGrob(
-      km4A_with_label,
-      cox4B_with_label,
-      ncol = 1,
-      heights = c(1.2, 1.0)
-    ),
-    ncol = 1,
-    heights = c(0.06, 1)
-  )
-  
-  # ---- 7) Save combined figure ----
-  out_tif <- "X:/R/Figure4_combined_sensitivity_A_KM_B_Cox_labeled.tif"
-  out_pdf <- "X:/R/Figure4_combined_sensitivity_A_KM_B_Cox_labeled_check.pdf"
-  
-  if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-  ragg::agg_tiff(filename = out_tif, width = 180, height = 300, units = "mm", res = 600, compression = "lzw")
-  grid::grid.newpage(); grid::grid.draw(fig4_AB_labeled); dev.off()
-  
-  pdf(out_pdf, width = 7.1, height = 11.5)
-  grid::grid.draw(fig4_AB_labeled)
-  dev.off()
-  
-  # optional preview
-  grid::grid.newpage()
-  grid::grid.draw(fig4_AB_labeled)
-  
-  
-  # ============================================================
-  # Figure 4 (Sensitivity: All-Cause Mortality) - ONE PASTE
-  #  (A) KM + risk table
-  #  (B) Cox HR table + forest
-  #  - Labels: nonAKD / AKD with Recovery / AKD without Recovery
-  #  - Figure title: "Figure 4. Sensitivity Analyses: All-Cause Mortality"
-  #  - Keep (A)/(B); remove "(sensitivity analysis)" from subtitles
-  #
-  # Assumes these objects already exist in your session:
-  #   - jin1_Eligibile_sens   (sensitivity dataset; must include: group, time_years, primary_death, age, index_cre, arb_acei_use, dn*, CKD_status)
-  #   - p_death_sens          (ggsurvplot object for KM in sensitivity analysis)
-  # ============================================================
-  
-  library(dplyr)
-  library(survival)
-  library(broom)
-  library(ggplot2)
-  library(gridExtra)
-  library(grid)
-#感度分析死亡のカプランマイヤー####
-#データ整形
-jin1_Eligibile_sens <- jin1_Eligibile_unique_id %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+dat_sens <- dat1 %>%
   mutate(
     group = case_when(
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 0 ~ NA_character_,  # 除外対象をNAに
       jin_status == "nonAKD" ~ "nonAKD",
       jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
       jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
       jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 2 ~ "Non-Recovery",
+      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0,2) ~ "Non-Recovery",
       TRUE ~ NA_character_
     ),
-    arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-    group = factor(group, levels = c("nonAKD", "Recovery", "Non-Recovery")), 
-    time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
+    group = factor(group, levels = levels_full),
+    arb_acei_use = if_else(coalesce(arb,0)==1 | coalesce(acei,0)==1, 1L, 0L),
+    time_years = as.numeric(last_follow_death - index_plus_210)/365.25
   ) %>%
-  filter(!is.na(group), time_years >= 0)
+  filter(!is.na(group), !is.na(time_years), time_years >= 0)
 
-# モデル作成、グラフ（死亡）
-library(survival)
-library(survminer)
-library(ggplot2)
+# ==========================================================
+# Common axis / colors (primaryと同じ)
+# ==========================================================
+ticks_show <- seq(0, 8, by = 2)
+x_right <- 9.5
+x_right_risk <- 8.2
 
-fit_death_sens <- survfit(Surv(time_years, primary_death) ~ group,
-                          data = jin1_Eligibile_sens)
-
-p_death_sens <- ggsurvplot(
-  fit_death_sens,
-  data        = jin1_Eligibile_sens,
-  fun         = "event",                     # 1 - survival（累積死亡率）
-  pval        = TRUE,
-  conf.int    = TRUE,
-  risk.table  = TRUE,
-  xlim        = c(0, 9.5),                    # 10年まで表示
-  ylim        = c(0, 0.4),
-  title       = "Cumulative incidence of all-cause death\n(Sensitivity analysis)",
-  xlab        = "Years",
-  ylab        = "Cumulative incidence",
-  break.time.by = 2,
-  legend.title  = "Group",
-  legend.labs   = c("nonAKD", "Recovery", "Non-Recovery")  # 必要に応じて
+pal <- c(
+  "nonAKD"       = "#95A5A6",
+  "Recovery"     = "#2ECC71",
+  "Non-Recovery" = "#E74C3C"
 )
-# ---- 0) Safety: CKD_status ref を nonCKD に固定（本解析と揃える）----
-jin1_Eligibile_sens <- jin1_Eligibile_sens %>%
+
+common_left_margin_pt  <- 80
+common_right_margin_pt <- 80
+
+# ==========================================================
+# KM fit
+# ==========================================================
+fit <- survfit(Surv(time_years, primary_death) ~ group, data = dat_sens)
+
+# ==========================================================
+# KM panel (manual CIF)  ※primaryと同じ
+# ==========================================================
+s <- summary(fit)
+
+km_df <- data.frame(
+  time   = s$time,
+  surv   = s$surv,
+  lower  = s$lower,
+  upper  = s$upper,
+  strata = s$strata
+) %>%
   mutate(
-    CKD_status = case_when(
-      as.character(CKD_status) %in% c("CKD", "1")     ~ "CKD",
-      as.character(CKD_status) %in% c("nonCKD", "0") ~ "nonCKD",
-      TRUE ~ as.character(CKD_status)
-    ),
-    CKD_status = factor(CKD_status, levels = c("nonCKD", "CKD"))
+    group = factor(sub("^group=","", strata), levels = levels_full),
+    cif   = 1 - surv,
+    cif_l = 1 - upper,
+    cif_u = 1 - lower
   ) %>%
-  filter(!is.na(CKD_status))
+  arrange(group, time)
 
-# ---- 1) Cox model（感度分析：group, ref=nonAKD）----
-dat_sens <- jin1_Eligibile_sens %>%
-  mutate(group = relevel(group, ref = "nonAKD")) %>%
-  droplevels()
+p_km <- ggplot(km_df, aes(x = time, y = cif, colour = group, fill = group)) +
+  geom_ribbon(aes(ymin = cif_l, ymax = cif_u),
+              alpha = km_ci_alpha, linewidth = 0, show.legend = FALSE) +
+  geom_step(linewidth = km_line_lwd, show.legend = FALSE) +
+  scale_x_continuous(breaks = ticks_show, limits = c(0, x_right), expand = c(0, 0)) +
+  scale_y_continuous(limits = c(0, 0.40), breaks = seq(0, 0.4, 0.1), expand = c(0, 0)) +
+  scale_colour_manual(values = pal, breaks = levels_full) +
+  scale_fill_manual(values = pal, breaks = levels_full) +
+  labs(x = NULL, y = "Cumulative incidence") +
+  theme_classic(base_size = base_fs) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank(),
+    plot.margin  = margin(t = 4, r = common_right_margin_pt, b = 10,
+                          l = common_left_margin_pt, unit = "pt")
+  )
 
-fit_sens <- coxph(
+# ==========================================================
+# Legend panel (full width above KM) ※primaryと同じ構造
+#  表示名（改行なし）をここで作る
+# ==========================================================
+leg_levels_disp <- c(
+  "nonAKD"       = "nonAKD",
+  "Recovery"     = "AKD with recovery",
+  "Non-Recovery" = "AKD without recovery"
+)
+
+leg_df <- tibble(
+  group = factor(levels_full, levels = levels_full),
+  x0 = c(1.2, 10.0, 20.0),
+  y  = 1.10,
+  label = unname(leg_levels_disp[levels_full])
+) %>%
+  mutate(x1 = x0 + 0.85)
+
+p_leg <- ggplot(leg_df) +
+  geom_rect(aes(xmin = x0, xmax = x1, ymin = y - 0.18, ymax = y + 0.18, fill = group),
+            alpha = 0.25, colour = NA) +
+  geom_segment(aes(x = x0, xend = x1, y = y, yend = y, colour = group),
+               linewidth = 1.1) +
+  geom_text(aes(x = x1 + 0.55, y = y, label = label),
+            hjust = 0, size = leg_text_size) +
+  scale_fill_manual(values = pal, guide = "none") +
+  scale_colour_manual(values = pal, guide = "none") +
+  coord_cartesian(xlim = c(0.5, 30.0), ylim = c(0.6, 1.7), clip = "off") +
+  theme_void(base_size = base_fs) +
+  theme(
+    plot.margin = margin(t = 0, r = common_right_margin_pt, b = 0,
+                         l = common_left_margin_pt, unit = "pt")
+  )
+
+# ==========================================================
+# Number at risk (0-align + fixed y_map) ※primaryと同じ
+# ==========================================================
+sfit <- summary(fit, times = ticks_show, extend = TRUE)
+
+time0_shift <- 0.22
+label_pad_mm <- 10
+
+risk_df <- data.frame(
+  time   = sfit$time,
+  strata = sfit$strata,
+  n_risk = sfit$n.risk
+) %>%
+  mutate(
+    group = factor(sub("^group=","", strata), levels = levels_full),
+    y = unname(y_map[as.character(group)]),
+    time_plot = ifelse(time == 0, time0_shift, time),
+    group_disp = case_when(
+      as.character(group) == "Recovery"     ~ "AKD with\nrecovery",
+      as.character(group) == "Non-Recovery" ~ "AKD without\nrecovery",
+      TRUE ~ as.character(group)
+    )
+  )
+
+p_risk <- ggplot() +
+  geom_text(
+    data = risk_df,
+    aes(x = time_plot, y = y, label = n_risk),
+    size = num_size
+  ) +
+  scale_x_continuous(
+    breaks = ticks_show,
+    limits = c(0, x_right_risk),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(
+    breaks = sort(unique(risk_df$y)),
+    labels = rep("", length(unique(risk_df$y))),
+    expand = c(0, 0)
+  ) +
+  labs(x = "Years", title = "Number at risk") +
+  theme_classic(base_size = risk_fs) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y  = element_blank(),
+    plot.margin  = margin(t = risk_margin_t, r = common_right_margin_pt,
+                          b = risk_margin_b, l = common_left_margin_pt, unit = "pt"),
+    plot.title.position = "plot",
+    plot.title = element_text(margin = margin(b = risk_title_mb), vjust = 0)
+  ) +
+  coord_cartesian(ylim = risk_ylim, clip = "off")
+
+# ---- add GROUP LABELS outside panel ----
+for (grp in levels_full) {
+  yv  <- unique(risk_df$y[risk_df$group == grp])[1]
+  lab <- unique(risk_df$group_disp[risk_df$group == grp])[1]
+  col <- pal[grp]
+  
+  p_risk <- p_risk +
+    annotation_custom(
+      grob = textGrob(
+        lab,
+        x = unit(0, "npc") - unit(label_pad_mm, "mm"),
+        just = "right",
+        gp = gpar(col = col, fontsize = risk_fs)
+      ),
+      xmin = -Inf, xmax = -Inf, ymin = yv, ymax = yv
+    )
+}
+
+# ==========================================================
+# Bind KM + risk with controlled vertical ratio (compress risk)
+# ==========================================================
+g_km   <- ggplotGrob(p_km)
+g_risk <- ggplotGrob(p_risk)
+
+# hard align widths
+g_risk$widths <- g_km$widths
+
+km_risk_block <- arrangeGrob(
+  g_km, g_risk,
+  ncol = 1,
+  heights = km_vs_risk_heights
+)
+
+# ==========================================================
+# Figure 4 object (KM only) + bottom blank (pack to upper half)
+# ==========================================================
+fig4_onlyKM <- arrangeGrob(
+  textGrob(
+    "Figure 4. Sensitivity Analyses: All-Cause Mortality",
+    x = unit(0.02, "npc"),
+    y = unit(0.95, "npc"),
+    just = c("left", "top"),
+    gp = gpar(fontsize = 14, fontface = "bold")
+  ),
+  p_leg,
+  km_risk_block,
+  nullGrob(),
+  ncol = 1,
+  heights = c(0.10, fig4_heights)
+)
+
+# ==========================================================
+# Cox → HR table (separate file, like primary Table2)
+# ==========================================================
+fit_cox <- coxph(
   Surv(time_years, primary_death) ~
     group + age + index_cre + arb_acei_use +
-    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
-    CKD_status,
+    dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
   data = dat_sens
 )
 
-# ---- 2) Forest + HR table function (2 contrasts vs nonAKD) ----
-make_forest_with_table_2contrast_group <- function(fit,
-                                                   out_tif,
-                                                   out_pdf,
-                                                   width_mm = 160,
-                                                   height_mm = 140,
-                                                   res_dpi = 600,
-                                                   hr_limits = c(0.5, 7),
-                                                   hr_breaks = c(0.5, 1, 2, 3, 4, 7),
-                                                   title_txt = NULL) {
-  
-  cf <- names(coef(fit))
-  if (!any(grepl("^group", cf))) {
-    stop("This Cox model does not contain estimated terms starting with 'group'.")
-  }
-  
-  td <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
-  
-  target_terms <- c("groupRecovery", "groupNon-Recovery")
-  target_terms <- target_terms[target_terms %in% td$term]
-  if (length(target_terms) == 0) {
-    stop("No target terms (groupRecovery / groupNon-Recovery) found in broom::tidy(fit).")
-  }
-  
-  td2 <- td %>%
-    filter(term %in% target_terms) %>%
-    mutate(
-      Contrast = dplyr::recode(
-        term,
-        "groupRecovery"     = "AKD with Recovery vs nonAKD",
-        "groupNon-Recovery" = "AKD without Recovery vs nonAKD",
-        .default = term
-      ),
-      Contrast = factor(
-        Contrast,
-        levels = c("AKD without Recovery vs nonAKD", "AKD with Recovery vs nonAKD")
-      )
-    )
-  
-  hr_table <- td2 %>%
-    mutate(
-      HR        = round(estimate, 2),
-      CI_lower  = round(conf.low, 2),
-      CI_upper  = round(conf.high, 2),
-      p_raw     = p.value,
-      `p-value` = ifelse(p_raw < 0.01, "<0.01", sprintf("%.2f", p_raw))
-    ) %>%
-    dplyr::select(
-      Contrast,
-      HR,
-      `Lower 95% CI` = CI_lower,
-      `Upper 95% CI` = CI_upper,
-      `p-value`
-    )
-  
-  p_forest <- ggplot(td2, aes(x = Contrast, y = estimate)) +
-    geom_point(size = 2.5) +
-    geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 0.7) +
-    geom_hline(yintercept = 1, linetype = "dashed") +
-    coord_flip() +
-    scale_y_log10(
-      name   = "Hazard ratio for all-cause mortality (log scale)",
-      breaks = hr_breaks,
-      limits = hr_limits
-    ) +
-    labs(x = NULL, title = title_txt) +
-    theme_bw(base_size = 11) +
-    theme(
-      panel.grid.minor = element_blank(),
-      axis.text.y      = element_text(size = 10),
-      axis.text.x      = element_text(size = 9),
-      plot.title       = element_text(hjust = 0.5, face = "bold"),
-      plot.margin      = margin(t = 5.5, r = 10, b = 5.5, l = 7, unit = "pt")
-    )
-  
-  table_theme <- gridExtra::ttheme_minimal(
-    core = list(fontsize = 9, padding = unit(c(2, 2), "mm")),
-    colhead = list(fontsize = 9, fontface = "bold", padding = unit(c(2, 2), "mm"))
+hr_table <- broom::tidy(fit_cox, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term %in% c("groupRecovery", "groupNon-Recovery")) %>%
+  mutate(
+    Contrast = c("AKD with recovery vs nonAKD",
+                 "AKD without recovery vs nonAKD"),
+    HR = sprintf("%.2f", estimate),
+    `95% CI` = sprintf("%.2f–%.2f", conf.low, conf.high),
+    `p-value` = ifelse(p.value < 0.01, "<0.01", sprintf("%.2f", p.value))
+  ) %>%
+  select(Contrast, HR, `95% CI`, `p-value`)
+
+write_csv(hr_table, out_tab4_csv)
+
+hr_grob <- tableGrob(
+  hr_table, rows = NULL,
+  theme = ttheme_default(
+    base_size = hr_fs,
+    core = list(bg_params = list(col = "black", lwd = 0.4)),
+    colhead = list(bg_params = list(col = "black", lwd = 0.6),
+                   fg_params = list(fontface = "bold"))
   )
-  table_grob <- gridExtra::tableGrob(hr_table, rows = NULL, theme = table_theme)
-  
-  combined <- gridExtra::arrangeGrob(
-    table_grob,
-    p_forest,
-    ncol = 1,
-    heights = c(1, 2)
-  )
-  
-  if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-  ragg::agg_tiff(
-    filename = out_tif,
-    width = width_mm, height = height_mm, units = "mm",
-    res = res_dpi,
-    compression = "lzw"
-  )
-  grid::grid.newpage()
-  grid::grid.draw(combined)
-  dev.off()
-  
-  pdf(out_pdf, width = 7, height = 6)
-  grid::grid.draw(combined)
-  dev.off()
-  
-  invisible(list(hr_table = hr_table, forest = p_forest, combined = combined))
-}
-
-# ---- 3) Build Figure4B grob (no forest title) ----
-res4B <- make_forest_with_table_2contrast_group(
-  fit = fit_sens,
-  out_tif = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity.tif",
-  out_pdf = "X:/R/Figure4B_forest_with_table_death_akd_3groups_sensitivity_check.pdf",
-  title_txt = NULL
-)
-cox4B_grob <- res4B$combined
-
-# ---- 4) Figure4A: remove internal titles + fix legend labels ----
-p_death_sens2 <- p_death_sens
-p_death_sens2$plot  <- p_death_sens2$plot  + theme(plot.title = element_blank())
-if (!is.null(p_death_sens2$table)) p_death_sens2$table <- p_death_sens2$table + theme(plot.title = element_blank())
-
-# ★ Legend labels (display only)
-p_death_sens2$plot <- p_death_sens2$plot +
-  scale_color_discrete(labels = c("nonAKD", "AKD with Recovery", "AKD without Recovery")) +
-  scale_fill_discrete(labels  = c("nonAKD", "AKD with Recovery", "AKD without Recovery"))
-
-# ---- 5) Panel labels (keep A/B; remove '(sensitivity analysis)') ----
-km4A_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(A) Cumulative incidence of all-cause death",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  gridExtra::arrangeGrob(
-    p_death_sens2$plot,
-    p_death_sens2$table,
-    ncol = 1,
-    heights = c(3, 1)
-  ),
-  ncol = 1,
-  heights = c(0.08, 1)
 )
 
-cox4B_with_label <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "(B) Adjusted hazard ratios for all-cause mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 12, fontface = "bold")
-  ),
-  cox4B_grob,
-  ncol = 1,
-  heights = c(0.08, 1)
+# outer border
+hr_grob <- gtable_add_grob(
+  hr_grob,
+  rectGrob(gp = gpar(fill = NA, col = "black", lwd = 1)),
+  t = 1, l = 1, b = nrow(hr_grob), r = ncol(hr_grob)
 )
 
-# ---- 6) Figure title + combine A/B ----
-fig4_AB_labeled <- gridExtra::arrangeGrob(
-  grid::textGrob(
-    "Figure 4. Sensitivity Analyses: All-Cause Mortality",
-    x = unit(0, "npc"), y = unit(1, "npc"),
-    just = c("left", "top"),
-    gp = grid::gpar(fontsize = 14, fontface = "bold")
-  ),
-  gridExtra::arrangeGrob(
-    km4A_with_label,
-    cox4B_with_label,
-    ncol = 1,
-    heights = c(1.2, 1.0)
-  ),
-  ncol = 1,
-  heights = c(0.06, 1)
+tab4_onlyHR <- arrangeGrob(
+  textGrob("Table 3. Adjusted hazard ratios for all-cause mortality",
+           x = unit(0, "npc"), just = "left",
+           gp = gpar(fontsize = 12, fontface = "bold")),
+  hr_grob, ncol = 1, heights = c(0.18, 1)
 )
 
-# ---- 7) Save combined figure ----
-out_tif <- "X:/R/Figure4_combined_sensitivity_A_KM_B_Cox_labeled.tif"
-out_pdf <- "X:/R/Figure4_combined_sensitivity_A_KM_B_Cox_labeled_check.pdf"
+# ==========================================================
+# Draw (optional check)
+# ==========================================================
+grid.newpage(); grid.draw(fig4_onlyKM)
+grid.newpage(); grid.draw(tab4_onlyHR)
 
-if (!requireNamespace("ragg", quietly = TRUE)) install.packages("ragg")
-ragg::agg_tiff(
-  filename = out_tif,
-  width = 180,
-  height = 300,
-  units = "mm",
-  res = 600,
-  compression = "lzw"
+# ==========================================================
+# SAVE (★sensitivity_analysisへ)
+# ==========================================================
+ragg::agg_tiff(out_fig4_tif, width = 180, height = 220, units = "mm", res = 600, compression = "lzw")
+grid.newpage(); grid.draw(fig4_onlyKM); dev.off()
+
+pdf(out_fig4_pdf, width = 7.8, height = 8.4)
+grid.newpage(); grid.draw(fig4_onlyKM); dev.off()
+
+ragg::agg_tiff(out_tab4_tif, width = 180, height = 120, units = "mm", res = 600, compression = "lzw")
+grid.newpage(); grid.draw(tab4_onlyHR); dev.off()
+
+pdf(out_tab4_pdf, width = 7.8, height = 4.6)
+grid.newpage(); grid.draw(tab4_onlyHR); dev.off()
+
+############################################################
+# Quick knobs (same as primary):
+#  - pack figure up: fig4_heights = c(legend, km+risk, blank) -> increase blank
+#  - shrink risk panel: km_vs_risk_heights -> make 2nd smaller
+#  - risk row spacing: y_map values closer together
+#  - title-to-table: risk_ylim upper (smaller -> closer)
+############################################################
+# ==========================================================
+# Table (Figure 4) を Word（docx）でも保存（officer + flextable）
+#  - タイトル + 罫線付きテーブル
+#  - 1ページに収まりやすい余白/幅/フォント
+# ==========================================================
+pkgs_w <- c("officer","flextable")
+to_install_w <- pkgs_w[!vapply(pkgs_w, requireNamespace, logical(1), quietly = TRUE)]
+if (length(to_install_w) > 0) install.packages(to_install_w, dependencies = TRUE)
+
+library(officer)
+library(flextable)
+
+out_tab4_docx <- file.path(out_dir, "Table_3_sensitivity_HR.docx")
+
+# ---- flextable化（列幅/罫線/文字などを整える）----
+ft4 <- flextable(hr_table)
+
+ft4 <- ft4 %>%
+  theme_booktabs() %>%                 # すっきり（罫線強めが良ければ theme_vanilla() に変更）
+  bold(part = "header") %>%
+  align(align = "left", part = "all") %>%
+  align(j = c("HR","95% CI","p-value"), align = "center", part = "all") %>%
+  autofit()
+
+# 列幅（A4縦で読みやすい目安。必要なら微調整）
+ft4 <- width(ft4, j = "Contrast", width = 3.8)
+ft4 <- width(ft4, j = "HR",       width = 1.0)
+ft4 <- width(ft4, j = "95% CI",   width = 1.6)
+ft4 <- width(ft4, j = "p-value",  width = 1.0)
+
+# フォントサイズ
+ft4 <- fontsize(ft4, size = 11, part = "all")
+
+# 外枠＋内枠（TableGrobの“外枠”相当）
+outer <- fp_border(color = "black", width = 1)
+inner <- fp_border(color = "black", width = 0.5)
+ft4 <- border_remove(ft4)
+ft4 <- border_outer(ft4, border = outer)
+ft4 <- border_inner_h(ft4, border = inner)
+ft4 <- border_inner_v(ft4, border = inner)
+
+# ---- Word作成（A4縦・余白を詰めて1枚に収めやすく）----
+doc4 <- read_docx()
+
+sec4 <- prop_section(
+  page_size = page_size(width = 8.27, height = 11.69),   # A4 (inch)
+  page_margins = page_mar(top = 0.6, bottom = 0.6, left = 0.7, right = 0.7)
 )
-grid::grid.newpage()
-grid::grid.draw(fig4_AB_labeled)
-dev.off()
 
-pdf(out_pdf, width = 7.1, height = 11.5)
-grid::grid.draw(fig4_AB_labeled)
-dev.off()
+doc4 <- doc4 %>%
+  body_add_par("Table 3. Adjusted hazard ratios for all-cause mortality",
+               style = "heading 2") %>%
+  body_add_flextable(ft4) %>%
+  body_add_par("", style = "Normal") %>%
+  body_end_section_continuous() %>%
+  body_set_default_section(sec4)
 
-# optional preview
-grid::grid.newpage()
-grid::grid.draw(fig4_AB_labeled)
+print(doc4, target = out_tab4_docx)
+} #感度分析
 
-
-
-
-
-##併存疾患表の作成
+##併存疾患表の作成(SuppleT1,2)
 {
 #####
 # ============================================
@@ -1455,6 +898,7 @@ library(officer)
 library(openxlsx)
 
 # ---- 1) read ----
+setwd("X:/R")
 file <- "Supplementary_Table_1_combined.xlsx"
 
 dat <- readxl::read_xlsx(file, sheet = "Supplementary_Table_1") %>%
@@ -1549,113 +993,344 @@ openxlsx::write.xlsx(
 
 # ---- 6) Viewer確認 ----
 ft
-
-
-
-# 本解析Recovery ID
-id_main_rec <- jin1_Eligibile_death %>%
-  filter(jin_label == "nonAKD") %>%
-  pull(id) %>% unique()
-
-# 感度分析Recovery ID
-id_sens_rec <- jin1_Eligibile_sens %>%
-  filter(group == "nonAKD") %>%
-  pull(id) %>% unique()
-
-# 差分確認
-setdiff(id_main_rec, id_sens_rec)   # 本解析にいて感度にいない
-setdiff(id_sens_rec, id_main_rec)   # 感度にいて本解析にいない
-length(id_main_rec); length(id_sens_rec)
-
-}
-#競合エンドポイントについてのカプランマイヤー 2025/8/5
+} #データセットをエクセルにまとめ
 {
-install.packages("survminer")
-library(survival)
-library(survminer)
+library(readxl)
 library(dplyr)
-
-#競合エンドポイントについてのカプランマイヤーデータ整形
-jin1_Eligibile_composite <- jin1_Eligibile_unique_id %>%
-  filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
-  mutate(
-    jin_label = case_when(
-      jin_status == "nonAKD" ~ "nonAKD",
-      jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
-      jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
-      TRUE ~ NA_character_
-    ),
-    jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")), 
-    time_years = as.numeric(last_follow_composite - index_plus_210) / 365.25　
-  ) %>%
-  filter(!is.na(jin_label), time_years >= 0)
-
-fit_composite <- survfit(Surv(time_years, primary_composite_event) ~jin_label, data = jin1_Eligibile_composite)
-
-ggsurvplot(fit_composite, data = jin1_Eligibile_composite,
-           fun = "event",                     # 1 - survival（累積死亡率）
-           pval = TRUE, conf.int = TRUE,
-           risk.table = TRUE,
-           xlim = c(0, 10),                   # 10年まで表示
-           ylim = c(0, 0.4),
-           title = "composite_event",
-           xlab = "year",
-           ylab = "event")
-
-## ---- 図の作成（曲線のみ、抄録仕様） ----
-km_plot <- ggsurvplot(
-  fit_composite,
-  data = jin1_Eligibile_composite,
-  fun = "event",
-  pval = TRUE,
-  conf.int = TRUE,
-  conf.int.alpha = 0.20,          # CIを薄く
-  size = 1.1,                     # 線を少し太く
-  risk.table = FALSE,             # 抄録では非表示推奨
-  xlim = c(0, 9.5),
-  ylim = c(0, 0.4),
-  title = "Cumulative incidence of composite_event by AKD recovery status",
-  xlab = "Years since index date",
-  ylab = "Cumulative incidence",
-  legend.title = NULL,
-  legend.labs = c("non-AKD", "AKD Recovery", "AKD Non-Recovery"),
-  palette = c("#E64B35", "#00A087", "#4DBBD5"),
-  ggtheme = theme_minimal(base_size = 12)
-)
-
-km_plot$plot <- km_plot$plot +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-    axis.title = element_text(size = 12),
-    axis.text  = element_text(size = 10)
-  )
-
-# （任意）p値の位置を微調整したい場合
-# km_plot$plot <- km_plot$plot + annotate("text", x = 0.5, y = 0.36, label = km_plot$pval, hjust = 0)
-
-# ---- JPEGで保存（640×480px, ≤1.5MB）----
-jpeg("composite_event_curve_for_abstract.jpeg", width = 640, height = 480, units = "px", quality = 95)
-print(km_plot$plot)
-dev.off()
-}
+library(tidyr)
+library(stringr)
+library(officer)
+library(flextable)
 
 setwd("X:/R")
-install.packages("qpdf")
-library(qpdf)
-pdfs <- c(
-  "Figure1_flowchart_AKD.pdf",
-  "Figure2_combined_vertical_labeled_check.pdf",
-  "Figure3_eGFR_trajectory_and_slope_1y.pdf",
-  "Figure4_combined_sensitivity_A_KM_B_Cox_labeled_check.pdf",
-  "Figure5_sensitivity_trajectory_and_slope_1y.pdf",
-  "SupplementalFigure1_main_trajectory_and_bar_3y_all.pdf",
-  "SupplementalFigure2_sensitivity_bar_and_trajectory_3y_all.pdf",
-  "SupplementalFigure3_interaction_forest_CKD_check.pdf",
-  "Supplementary_Table_1.pdf",
-  "Table1_Baseline_with_CKD.pdf"
+file_path <- "Supplementary_Table_1_collapsed.xlsx"
+out_dir   <- "X:/R/word_supp_tables"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+out_doc1 <- file.path(out_dir, "Supplementary_Table_1_Drugs_portrait_readable.docx")
+out_doc2 <- file.path(out_dir, "Supplementary_Table_2_ICD10_portrait_readable.docx")
+
+# ---- Load ----
+raw <- read_excel(file_path)
+if (!all(c("term","definition") %in% names(raw))) raw <- raw %>% rename(term = 1, definition = 2)
+
+dat <- raw %>%
+  mutate(
+    term = str_squish(as.character(term)),
+    definition = str_squish(as.character(definition))
+  ) %>%
+  filter(!is.na(term), !is.na(definition), term != "", definition != "")
+
+# ---- Drug terms ----
+drug_terms <- c(
+  "SGLT2 inhibitor",
+  "Angiotensin II receptor blocker (ARB)",
+  "Angiotensin receptor–neprilysin inhibitor (ARNI)",
+  "Angiotensin-converting enzyme inhibitor (ACE inhibitor)",
+  "SGLT2 inhibitor combination",
+  "ARB + calcium channel blocker",
+  "ARB + diuretic"
 )
 
-pdf_combine(pdfs, output = "All_Figures_and_Tables.pdf")
+dat2 <- dat %>% mutate(is_drug = term %in% drug_terms)
+
+drug_dat <- dat2 %>% filter(is_drug) %>% select(term, definition)
+icd_dat  <- dat2 %>% filter(!is_drug) %>% select(term, definition)
+
+# ---- Table 1: collapse by Drug class ----
+tbl1 <- drug_dat %>%
+  mutate(definition = str_replace_all(definition, ";", ",")) %>%
+  separate_rows(definition, sep = "[,/]+") %>%
+  mutate(Generic_name = str_squish(definition)) %>%
+  filter(Generic_name != "") %>%
+  transmute(`Drug class` = term, `Generic name` = Generic_name) %>%
+  distinct() %>%
+  group_by(`Drug class`) %>%
+  summarise(`Generic name` = paste(sort(unique(`Generic name`)), collapse = ", "), .groups = "drop") %>%
+  arrange(`Drug class`)
+
+# ---- Table 2: collapse by Disease name (NO line breaks; keep original text) ----
+tbl2 <- icd_dat %>%
+  group_by(`Disease name` = term) %>%
+  summarise(`ICD-10 code` = paste(unique(definition), collapse = "; "), .groups = "drop") %>%
+  mutate(`ICD-10 code` = str_replace_all(`ICD-10 code`, "\\s*;\\s*", "; ")) %>%
+  arrange(`Disease name`)
+
+# ---- A4 portrait, margins slightly tight but not extreme ----
+ps <- prop_section(
+  page_size = page_size(width = 21.0, height = 29.7),
+  page_margins = page_mar(top = 0.6, bottom = 0.6, left = 0.6, right = 0.6,
+                          header = 0.2, footer = 0.2)
+)
+
+make_ft_readable <- function(df, caption_txt, col_widths, font_size = 10) {
+  ft <- flextable(df) %>%
+    set_caption(caption_txt) %>%
+    bold(part = "header") %>%
+    align(align = "left", part = "all") %>%
+    valign(valign = "top", part = "all") %>%
+    fontsize(size = font_size, part = "all") %>%
+    font(fontname = "Times New Roman", part = "all") %>%
+    border_remove() %>%
+    hline_top(border = fp_border(width = 1)) %>%
+    hline(border = fp_border(width = 0.8), part = "header") %>%
+    hline(i = seq_len(nrow(df)), border = fp_border(width = 0.35), part = "body") %>%
+    hline_bottom(border = fp_border(width = 1)) %>%
+    set_table_properties(layout = "fixed", width = 1)
+  
+  # 列幅固定（縦1枚で重要）
+  for (nm in names(col_widths)) {
+    if (nm %in% colnames(df)) ft <- width(ft, j = nm, width = col_widths[[nm]])
+  }
+  
+  ft
+}
+
+# Table 1: 10ptで十分
+ft1 <- make_ft_readable(
+  tbl1,
+  "Supplementary Table 1. Definitions of medications (drug class and generic names)",
+  col_widths = c("Drug class" = 7.0, "Generic name" = 9.0),
+  font_size = 10
+)
+
+doc1 <- read_docx() %>%
+  body_set_default_section(ps) %>%
+  body_add_flextable(ft1)
+print(doc1, target = out_doc1)
+
+# Table 2: Disease名は短め、ICD列を広く
+ft2 <- make_ft_readable(
+  tbl2,
+  "Supplementary Table 2. Disease definitions using ICD-10 codes",
+  col_widths = c("Disease name" = 6.0, "ICD-10 code" = 10.0),
+  font_size = 10
+)
+
+doc2 <- read_docx() %>%
+  body_set_default_section(ps) %>%
+  body_add_flextable(ft2)
+print(doc2, target = out_doc2)
+
+message("Saved:")
+message(out_doc1)
+message(out_doc2)
+
+library(RDCOMClient)
+
+convert_docx_to_pdf <- function(docx_path, pdf_path) {
+  docx_path <- normalizePath(docx_path, winslash = "\\", mustWork = TRUE)
+  pdf_path  <- normalizePath(pdf_path,  winslash = "\\", mustWork = FALSE)
+  
+  # --- Word起動（既存があれば掴む、なければ作る） ---
+  word <- NULL
+  word <- tryCatch(COMGetActiveObject("Word.Application"), error = function(e) NULL)
+  if (is.null(word)) {
+    word <- COMCreate("Word.Application")
+  }
+  
+  # Visible は環境によって無いことがあるので触らない（←今回の回避点）
+  # word[["Visible"]] <- FALSE
+  
+  # --- docxを開く（ReadOnly, AddToRecentFiles=FALSE） ---
+  docs <- word$Documents()
+  doc  <- docs$Open(docx_path, ReadOnly = TRUE, AddToRecentFiles = FALSE)
+  
+  # --- PDF保存：ExportAsFixedFormat が最も安定 ---
+  ok <- FALSE
+  try({
+    # 17 = wdExportFormatPDF
+    # 0 = wdExportOptimizeForPrint
+    doc$ExportAsFixedFormat(
+      OutputFileName = pdf_path,
+      ExportFormat   = 17,
+      OpenAfterExport = FALSE,
+      OptimizeFor     = 0
+    )
+    ok <- TRUE
+  }, silent = TRUE)
+  
+  # --- だめなら SaveAs2 にフォールバック ---
+  if (!ok) {
+    try({
+      # 17 = wdFormatPDF
+      doc$SaveAs2(pdf_path, FileFormat = 17)
+      ok <- TRUE
+    }, silent = TRUE)
+  }
+  
+  # --- 後片付け ---
+  doc$Close(FALSE)
+  
+  # ここは「自分で起動したWordだけ閉じたい」けど判定が難しいので、
+  # いったん Quit しない（Wordが勝手に閉じるのが嫌な場合）
+  # 必要なら次行を有効化
+  # word$Quit()
+  
+  if (!ok) stop("PDF conversion failed. (ExportAsFixedFormat / SaveAs2 both failed)")
+  invisible(TRUE)
+}
+
+# ---- ファイル指定 ----
+docx1 <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.docx"
+docx2 <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.docx"
+
+pdf1  <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.pdf"
+pdf2  <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.pdf"
+
+# ---- 実行 ----
+convert_docx_to_pdf(docx1, pdf1)
+convert_docx_to_pdf(docx2, pdf2)
+
+message("PDF conversion completed.")
+
+} #word,PDF変換
+
+
+#すべての図表をまとめる
+{
+############################################################
+# Merge selected PDFs (exact filenames from screenshot)
+############################################################
+
+# ---- 必要パッケージ ----
+if (!requireNamespace("pdftools", quietly = TRUE)) {
+  install.packages("pdftools")
+}
+library(pdftools)
+
+# ---- フォルダ ----
+dir_in  <- "X:/R/figure_table"
+out_pdf <- file.path(dir_in, "Merged_Figures_All.pdf")
+
+# ---- スクショ通りの正確なPDF名 ----
+pdf_files <- c(
+  "Figure1_flowchart_AKD.pdf",
+  "Figure2_primary_KM.pdf",
+  "Figure3A_observed_eGFR_trajectory_and_slope_1y.pdf",
+  "Figure4_sensitivity_KM.pdf",
+  "Figure5A_sens_observed_eGFR_trajectory_and_slope_1y.pdf",
+  "SupplementalFigure1A_main_observed_eGFR_trajectory_and_bar_3y_all.pdf",
+  "SupplementalFigure2A_sensitivity_observed_eGFR_trajectory_and_bar_3y_all.pdf",
+  "SupplementalFigure3_interaction_forest_CKD_check.pdf",
+  "Supplementary_Figure4_ForestPlot_Overall_AgeSubgroup.pdf",
+  "Supplementary_Figure5_AgeContinuousInteraction.pdf"
+)
+
+# ---- フルパス化 ----
+pdf_paths <- file.path(dir_in, pdf_files)
+
+# ---- 存在チェック ----
+missing <- pdf_paths[!file.exists(pdf_paths)]
+if (length(missing)) {
+  stop("These PDF files were not found:\n", paste(missing, collapse = "\n"))
+}
+
+# ---- 出力ファイルが開いていれば削除 ----
+if (file.exists(out_pdf)) {
+  file.remove(out_pdf)
+}
+
+# ---- 結合 ----
+pdf_combine(pdf_paths, output = out_pdf)
+
+cat("Merged successfully:\n", out_pdf)
+} #FigureをPDFまとめ
+{
+############################################################
+# Merge selected Word files into ONE document
+#  - Switch section orientation (portrait/landscape) per file
+#  - Add page break between documents
+############################################################
+
+pkgs <- c("officer","stringr","fs")
+to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(to_install)) install.packages(to_install, dependencies = TRUE)
+
+library(officer)
+library(stringr)
+library(fs)
+
+# ---- folder ----
+dir_in <- "X:/R/figure_table"   # ←あなたのフォルダ
+stopifnot(dir_exists(dir_in))
+
+out_docx <- file.path(dir_in, "Merged_Tables_Selected_fit.docx")
+
+files <- c(
+  "Supplementary_Table_1_Drugs_portrait_readable.docx",
+  "Supplementary_Table_2_ICD10_portrait_readable.docx",
+  "Table_3_sensitivity_HR.docx",
+  "Table1_Baseline_with_CKD_1page.docx",
+  "Table2_primary_HR.docx"
+)
+
+paths <- file.path(dir_in, files)
+missing <- paths[!file.exists(paths)]
+if (length(missing)) stop("Not found:\n", paste(missing, collapse = "\n"))
+
+if (file.exists(out_docx)) {
+  ok <- tryCatch(file.remove(out_docx), error = function(e) FALSE)
+  if (!isTRUE(ok)) stop("Close the output docx first: ", out_docx)
+}
+
+# ==========================================================
+# Section settings
+#  - A4 portrait/landscape, slightly tight margins
+# ==========================================================
+sec_portrait <- prop_section(
+  page_size = page_size(width = 8.27, height = 11.69),     # A4 portrait (inch)
+  page_margins = page_mar(top = 0.55, bottom = 0.55, left = 0.55, right = 0.55,
+                          header = 0.25, footer = 0.25)
+)
+
+sec_landscape <- prop_section(
+  page_size = page_size(width = 11.69, height = 8.27),     # A4 landscape (inch)
+  page_margins = page_mar(top = 0.45, bottom = 0.45, left = 0.45, right = 0.45,
+                          header = 0.25, footer = 0.25)
+)
+
+# ---- “横向きにしたいファイル”を指定（広い表があるものだけ）----
+# まずは Baseline table がはみ出すことが多いので landscape 推奨
+landscape_files <- c(
+  "Table1_Baseline_with_CKD_1page.docx"
+)
+# もし他もはみ出すならここに追加してください
+# landscape_files <- c("Table1_Baseline_with_CKD_1page.docx","...")
+
+# ==========================================================
+# Merge
+# ==========================================================
+doc <- read_docx() |> body_set_default_section(sec_portrait)
+
+for (i in seq_along(paths)) {
+  
+  f <- basename(paths[i])
+  is_land <- f %in% landscape_files
+  
+  # ---- セクション切替（次に入れる文書に合わせる）----
+  # ※「continuous section」で切替（ページは続くが向きだけ変わる）
+  if (is_land) {
+    doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_landscape)
+  } else {
+    doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_portrait)
+  }
+  
+  # (optional) 見出し（不要ならコメントアウトOK）
+  heading_txt <- str_replace(f, "\\.docx$", "")
+  doc <- doc |>
+    body_add_par(heading_txt, style = "heading 1") |>
+    body_add_par("", style = "Normal")
+  
+  # ---- docx を挿入 ----
+  doc <- body_add_docx(doc, src = paths[i])
+  
+  # ---- 次の文書との区切り：改ページ（最後以外）----
+  if (i < length(paths)) {
+    doc <- body_add_break(doc, pos = "after")
+  }
+}
+
+print(doc, target = out_docx)
+message("Saved: ", out_docx)
+} #Tableをwordまとめ
