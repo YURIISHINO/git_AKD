@@ -396,6 +396,7 @@ ggsave(file.path(outdir, "SupplementFigure1_eGFR_slope_adj_3windows.tiff"),
        device = "tiff", dpi = 600, compression = "lzw")
 
 } # 本解析
+
 {
 library(dplyr)
 library(ggplot2)
