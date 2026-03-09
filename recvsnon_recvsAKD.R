@@ -872,455 +872,455 @@ print(doc4, target = out_tab4_docx)
 
 ##併存疾患表の作成(SuppleT1,2)
 {
-#####
-# ============================================
-# Supplementary Table 1
-# 元Excelの順序を保持したまま term を collapse
-# → Word（docx）に論文掲載体裁で出力
-# ============================================
-
-library(readxl)
-library(dplyr)
-library(stringr)
-library(flextable)
-library(officer)
-library(openxlsx)
-
-# ---- 1) read ----
-setwd("X:/R")
-file <- "Supplementary_Table_1_combined.xlsx"
-
-dat <- readxl::read_xlsx(file, sheet = "Supplementary_Table_1") %>%
-  rename(
-    term = `Drug class or comorbidity`,
-    definition = `Definitions (generic drug names or ICD-10 codes)`
-  ) %>%
-  mutate(
-    term = str_squish(term),
-    definition = str_squish(definition),
-    row_id = row_number()   # ★ 元Excelでの出現順を保存
-  ) %>%
-  filter(!is.na(term), !is.na(definition), term != "", definition != "") %>%
-  filter(!(term %in% c("—","-","--") & definition %in% c("—","-","--")))
-
-# ---- 2) termごとにまとめる（最初に出た順序を保持） ----
-dat_collapsed <- dat %>%
-  group_by(term) %>%
-  summarise(
-    definition = paste(unique(definition), collapse = "; "),
-    first_row  = min(row_id),     # ★ 最初に出た位置
-    .groups = "drop"
-  ) %>%
-  arrange(first_row) %>%          # ★ 元Excel順に並び替え
-  mutate(
-    definition = stringr::str_replace_all(definition, ";\\s*", ";\n"),
-    definition = stringr::str_replace_all(definition, ",\\s*", ", ")
-  ) %>%   
-  dplyr::select(term, definition)
- 
-
-
-# ---- 3) flextable（論文掲載体裁） ----
-caption_txt <- "Supplementary Table 1. Definitions of medications and comorbidities"
-
-ft <- flextable(dat_collapsed) %>%
-  set_caption(caption_txt) %>%
-  set_header_labels(
-    term = "Drug class or comorbidity",
-    definition = "Definitions (generic drug names or ICD-10 codes)"
-  ) %>%
-  bold(part = "header") %>%
-  align(align = "left", part = "all") %>%
-  valign(valign = "top", part = "all") %>%
-  fontsize(size = 10, part = "all") %>%
-  font(fontname = "Times New Roman", part = "all") %>%
-  width(j = "term", width = 2.3) %>%
-  width(j = "definition", width = 5.0) %>%
-  border_remove() %>%
-  hline_top(border = fp_border(width = 1)) %>%
-  hline(border = fp_border(width = 0.6), part = "header") %>%
-  hline_bottom(border = fp_border(width = 1)) %>%
-  autofit() %>%
-# ---- 罫線設定 ----
-border_remove() %>%
+  #####
+  # ============================================
+  # Supplementary Table 1
+  # 元Excelの順序を保持したまま term を collapse
+  # → Word（docx）に論文掲載体裁で出力
+  # ============================================
   
-  # 表の一番上（太線）
-  hline_top(border = fp_border(width = 1)) %>%
+  library(readxl)
+  library(dplyr)
+  library(stringr)
+  library(flextable)
+  library(officer)
+  library(openxlsx)
   
-  # ヘッダ下（中太線）
-  hline(border = fp_border(width = 0.8), part = "header") %>%
+  # ---- 1) read ----
+  setwd("X:/R")
+  file <- "Supplementary_Table_1_combined.xlsx"
   
-  # ★ term（各行）の下に細い罫線を引く
-  hline(
-    i = seq_len(nrow(dat_collapsed)),
-    border = fp_border(width = 0.4),
-    part = "body"
-  ) %>%
+  dat <- readxl::read_xlsx(file, sheet = "Supplementary_Table_1") %>%
+    rename(
+      term = `Drug class or comorbidity`,
+      definition = `Definitions (generic drug names or ICD-10 codes)`
+    ) %>%
+    mutate(
+      term = str_squish(term),
+      definition = str_squish(definition),
+      row_id = row_number()   # ★ 元Excelでの出現順を保存
+    ) %>%
+    filter(!is.na(term), !is.na(definition), term != "", definition != "") %>%
+    filter(!(term %in% c("—","-","--") & definition %in% c("—","-","--")))
   
-  # 表の一番下（太線）
-  hline_bottom(border = fp_border(width = 1))
-# ft を作ったあとに追加する（重要）
-ft <- ft %>%
-  autofit() %>%
-  flextable::set_table_properties(
-    layout = "autofit",
-    width  = 1        # ← Wordページ幅に強制フィット
-  ) %>%
-  flextable::valign(valign = "top", part = "all")
-
-
-# ---- 4) Wordに出力 ----
-doc <- read_docx()
-doc <- body_add_flextable(doc, value = ft)
-print(doc, target = "Supplementary_Table_1_collapsed.docx")
-
-# ---- 5) 掲載用Excelも保存 ----
-openxlsx::write.xlsx(
-  dat_collapsed,
-  "Supplementary_Table_1_collapsed.xlsx"
-)
-
-# ---- 6) Viewer確認 ----
-ft
-} #データセットをエクセルにまとめ
-{
-library(readxl)
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(officer)
-library(flextable)
-
-setwd("X:/R")
-file_path <- "Supplementary_Table_1_collapsed.xlsx"
-out_dir   <- "X:/R/word_supp_tables"
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-
-out_doc1 <- file.path(out_dir, "Supplementary_Table_1_Drugs_portrait_readable.docx")
-out_doc2 <- file.path(out_dir, "Supplementary_Table_2_ICD10_portrait_readable.docx")
-
-# ---- Load ----
-raw <- read_excel(file_path)
-if (!all(c("term","definition") %in% names(raw))) raw <- raw %>% rename(term = 1, definition = 2)
-
-dat <- raw %>%
-  mutate(
-    term = str_squish(as.character(term)),
-    definition = str_squish(as.character(definition))
-  ) %>%
-  filter(!is.na(term), !is.na(definition), term != "", definition != "")
-
-# ---- Drug terms ----
-drug_terms <- c(
-  "SGLT2 inhibitor",
-  "Angiotensin II receptor blocker (ARB)",
-  "Angiotensin receptor–neprilysin inhibitor (ARNI)",
-  "Angiotensin-converting enzyme inhibitor (ACE inhibitor)",
-  "SGLT2 inhibitor combination",
-  "ARB + calcium channel blocker",
-  "ARB + diuretic"
-)
-
-dat2 <- dat %>% mutate(is_drug = term %in% drug_terms)
-
-drug_dat <- dat2 %>% filter(is_drug) %>% select(term, definition)
-icd_dat  <- dat2 %>% filter(!is_drug) %>% select(term, definition)
-
-# ---- Table 1: collapse by Drug class ----
-tbl1 <- drug_dat %>%
-  mutate(definition = str_replace_all(definition, ";", ",")) %>%
-  separate_rows(definition, sep = "[,/]+") %>%
-  mutate(Generic_name = str_squish(definition)) %>%
-  filter(Generic_name != "") %>%
-  transmute(`Drug class` = term, `Generic name` = Generic_name) %>%
-  distinct() %>%
-  group_by(`Drug class`) %>%
-  summarise(`Generic name` = paste(sort(unique(`Generic name`)), collapse = ", "), .groups = "drop") %>%
-  arrange(`Drug class`)
-
-# ---- Table 2: collapse by Disease name (NO line breaks; keep original text) ----
-tbl2 <- icd_dat %>%
-  group_by(`Disease name` = term) %>%
-  summarise(`ICD-10 code` = paste(unique(definition), collapse = "; "), .groups = "drop") %>%
-  mutate(`ICD-10 code` = str_replace_all(`ICD-10 code`, "\\s*;\\s*", "; ")) %>%
-  arrange(`Disease name`)
-
-# ---- A4 portrait, margins slightly tight but not extreme ----
-ps <- prop_section(
-  page_size = page_size(width = 21.0, height = 29.7),
-  page_margins = page_mar(top = 0.6, bottom = 0.6, left = 0.6, right = 0.6,
-                          header = 0.2, footer = 0.2)
-)
-
-make_ft_readable <- function(df, caption_txt, col_widths, font_size = 10) {
-  ft <- flextable(df) %>%
+  # ---- 2) termごとにまとめる（最初に出た順序を保持） ----
+  dat_collapsed <- dat %>%
+    group_by(term) %>%
+    summarise(
+      definition = paste(unique(definition), collapse = "; "),
+      first_row  = min(row_id),     # ★ 最初に出た位置
+      .groups = "drop"
+    ) %>%
+    arrange(first_row) %>%          # ★ 元Excel順に並び替え
+    mutate(
+      definition = stringr::str_replace_all(definition, ";\\s*", ";\n"),
+      definition = stringr::str_replace_all(definition, ",\\s*", ", ")
+    ) %>%   
+    dplyr::select(term, definition)
+  
+  
+  
+  # ---- 3) flextable（論文掲載体裁） ----
+  caption_txt <- "Supplementary Table 1. Definitions of medications and comorbidities"
+  
+  ft <- flextable(dat_collapsed) %>%
     set_caption(caption_txt) %>%
+    set_header_labels(
+      term = "Drug class or comorbidity",
+      definition = "Definitions (generic drug names or ICD-10 codes)"
+    ) %>%
     bold(part = "header") %>%
     align(align = "left", part = "all") %>%
     valign(valign = "top", part = "all") %>%
-    fontsize(size = font_size, part = "all") %>%
+    fontsize(size = 10, part = "all") %>%
     font(fontname = "Times New Roman", part = "all") %>%
+    width(j = "term", width = 2.3) %>%
+    width(j = "definition", width = 5.0) %>%
     border_remove() %>%
     hline_top(border = fp_border(width = 1)) %>%
-    hline(border = fp_border(width = 0.8), part = "header") %>%
-    hline(i = seq_len(nrow(df)), border = fp_border(width = 0.35), part = "body") %>%
+    hline(border = fp_border(width = 0.6), part = "header") %>%
     hline_bottom(border = fp_border(width = 1)) %>%
-    set_table_properties(layout = "fixed", width = 1)
+    autofit() %>%
+    # ---- 罫線設定 ----
+  border_remove() %>%
+    
+    # 表の一番上（太線）
+    hline_top(border = fp_border(width = 1)) %>%
+    
+    # ヘッダ下（中太線）
+    hline(border = fp_border(width = 0.8), part = "header") %>%
+    
+    # ★ term（各行）の下に細い罫線を引く
+    hline(
+      i = seq_len(nrow(dat_collapsed)),
+      border = fp_border(width = 0.4),
+      part = "body"
+    ) %>%
+    
+    # 表の一番下（太線）
+    hline_bottom(border = fp_border(width = 1))
+  # ft を作ったあとに追加する（重要）
+  ft <- ft %>%
+    autofit() %>%
+    flextable::set_table_properties(
+      layout = "autofit",
+      width  = 1        # ← Wordページ幅に強制フィット
+    ) %>%
+    flextable::valign(valign = "top", part = "all")
   
-  # 列幅固定（縦1枚で重要）
-  for (nm in names(col_widths)) {
-    if (nm %in% colnames(df)) ft <- width(ft, j = nm, width = col_widths[[nm]])
-  }
   
+  # ---- 4) Wordに出力 ----
+  doc <- read_docx()
+  doc <- body_add_flextable(doc, value = ft)
+  print(doc, target = "Supplementary_Table_1_collapsed.docx")
+  
+  # ---- 5) 掲載用Excelも保存 ----
+  openxlsx::write.xlsx(
+    dat_collapsed,
+    "Supplementary_Table_1_collapsed.xlsx"
+  )
+  
+  # ---- 6) Viewer確認 ----
   ft
-}
-
-# Table 1: 10ptで十分
-ft1 <- make_ft_readable(
-  tbl1,
-  "Supplementary Table 1. Definitions of medications (drug class and generic names)",
-  col_widths = c("Drug class" = 7.0, "Generic name" = 9.0),
-  font_size = 10
-)
-
-doc1 <- read_docx() %>%
-  body_set_default_section(ps) %>%
-  body_add_flextable(ft1)
-print(doc1, target = out_doc1)
-
-# Table 2: Disease名は短め、ICD列を広く
-ft2 <- make_ft_readable(
-  tbl2,
-  "Supplementary Table 2. Disease definitions using ICD-10 codes",
-  col_widths = c("Disease name" = 6.0, "ICD-10 code" = 10.0),
-  font_size = 10
-)
-
-doc2 <- read_docx() %>%
-  body_set_default_section(ps) %>%
-  body_add_flextable(ft2)
-print(doc2, target = out_doc2)
-
-message("Saved:")
-message(out_doc1)
-message(out_doc2)
-
-library(RDCOMClient)
-
-convert_docx_to_pdf <- function(docx_path, pdf_path) {
-  docx_path <- normalizePath(docx_path, winslash = "\\", mustWork = TRUE)
-  pdf_path  <- normalizePath(pdf_path,  winslash = "\\", mustWork = FALSE)
+} #データセットをエクセルにまとめ
+{
+  library(readxl)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(officer)
+  library(flextable)
   
-  # --- Word起動（既存があれば掴む、なければ作る） ---
-  word <- NULL
-  word <- tryCatch(COMGetActiveObject("Word.Application"), error = function(e) NULL)
-  if (is.null(word)) {
-    word <- COMCreate("Word.Application")
+  setwd("X:/R")
+  file_path <- "Supplementary_Table_1_collapsed.xlsx"
+  out_dir   <- "X:/R/word_supp_tables"
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  out_doc1 <- file.path(out_dir, "Supplementary_Table_1_Drugs_portrait_readable.docx")
+  out_doc2 <- file.path(out_dir, "Supplementary_Table_2_ICD10_portrait_readable.docx")
+  
+  # ---- Load ----
+  raw <- read_excel(file_path)
+  if (!all(c("term","definition") %in% names(raw))) raw <- raw %>% rename(term = 1, definition = 2)
+  
+  dat <- raw %>%
+    mutate(
+      term = str_squish(as.character(term)),
+      definition = str_squish(as.character(definition))
+    ) %>%
+    filter(!is.na(term), !is.na(definition), term != "", definition != "")
+  
+  # ---- Drug terms ----
+  drug_terms <- c(
+    "SGLT2 inhibitor",
+    "Angiotensin II receptor blocker (ARB)",
+    "Angiotensin receptor–neprilysin inhibitor (ARNI)",
+    "Angiotensin-converting enzyme inhibitor (ACE inhibitor)",
+    "SGLT2 inhibitor combination",
+    "ARB + calcium channel blocker",
+    "ARB + diuretic"
+  )
+  
+  dat2 <- dat %>% mutate(is_drug = term %in% drug_terms)
+  
+  drug_dat <- dat2 %>% filter(is_drug) %>% select(term, definition)
+  icd_dat  <- dat2 %>% filter(!is_drug) %>% select(term, definition)
+  
+  # ---- Table 1: collapse by Drug class ----
+  tbl1 <- drug_dat %>%
+    mutate(definition = str_replace_all(definition, ";", ",")) %>%
+    separate_rows(definition, sep = "[,/]+") %>%
+    mutate(Generic_name = str_squish(definition)) %>%
+    filter(Generic_name != "") %>%
+    transmute(`Drug class` = term, `Generic name` = Generic_name) %>%
+    distinct() %>%
+    group_by(`Drug class`) %>%
+    summarise(`Generic name` = paste(sort(unique(`Generic name`)), collapse = ", "), .groups = "drop") %>%
+    arrange(`Drug class`)
+  
+  # ---- Table 2: collapse by Disease name (NO line breaks; keep original text) ----
+  tbl2 <- icd_dat %>%
+    group_by(`Disease name` = term) %>%
+    summarise(`ICD-10 code` = paste(unique(definition), collapse = "; "), .groups = "drop") %>%
+    mutate(`ICD-10 code` = str_replace_all(`ICD-10 code`, "\\s*;\\s*", "; ")) %>%
+    arrange(`Disease name`)
+  
+  # ---- A4 portrait, margins slightly tight but not extreme ----
+  ps <- prop_section(
+    page_size = page_size(width = 21.0, height = 29.7),
+    page_margins = page_mar(top = 0.6, bottom = 0.6, left = 0.6, right = 0.6,
+                            header = 0.2, footer = 0.2)
+  )
+  
+  make_ft_readable <- function(df, caption_txt, col_widths, font_size = 10) {
+    ft <- flextable(df) %>%
+      set_caption(caption_txt) %>%
+      bold(part = "header") %>%
+      align(align = "left", part = "all") %>%
+      valign(valign = "top", part = "all") %>%
+      fontsize(size = font_size, part = "all") %>%
+      font(fontname = "Times New Roman", part = "all") %>%
+      border_remove() %>%
+      hline_top(border = fp_border(width = 1)) %>%
+      hline(border = fp_border(width = 0.8), part = "header") %>%
+      hline(i = seq_len(nrow(df)), border = fp_border(width = 0.35), part = "body") %>%
+      hline_bottom(border = fp_border(width = 1)) %>%
+      set_table_properties(layout = "fixed", width = 1)
+    
+    # 列幅固定（縦1枚で重要）
+    for (nm in names(col_widths)) {
+      if (nm %in% colnames(df)) ft <- width(ft, j = nm, width = col_widths[[nm]])
+    }
+    
+    ft
   }
   
-  # Visible は環境によって無いことがあるので触らない（←今回の回避点）
-  # word[["Visible"]] <- FALSE
+  # Table 1: 10ptで十分
+  ft1 <- make_ft_readable(
+    tbl1,
+    "Supplementary Table 1. Definitions of medications (drug class and generic names)",
+    col_widths = c("Drug class" = 7.0, "Generic name" = 9.0),
+    font_size = 10
+  )
   
-  # --- docxを開く（ReadOnly, AddToRecentFiles=FALSE） ---
-  docs <- word$Documents()
-  doc  <- docs$Open(docx_path, ReadOnly = TRUE, AddToRecentFiles = FALSE)
+  doc1 <- read_docx() %>%
+    body_set_default_section(ps) %>%
+    body_add_flextable(ft1)
+  print(doc1, target = out_doc1)
   
-  # --- PDF保存：ExportAsFixedFormat が最も安定 ---
-  ok <- FALSE
-  try({
-    # 17 = wdExportFormatPDF
-    # 0 = wdExportOptimizeForPrint
-    doc$ExportAsFixedFormat(
-      OutputFileName = pdf_path,
-      ExportFormat   = 17,
-      OpenAfterExport = FALSE,
-      OptimizeFor     = 0
-    )
-    ok <- TRUE
-  }, silent = TRUE)
+  # Table 2: Disease名は短め、ICD列を広く
+  ft2 <- make_ft_readable(
+    tbl2,
+    "Supplementary Table 2. Disease definitions using ICD-10 codes",
+    col_widths = c("Disease name" = 6.0, "ICD-10 code" = 10.0),
+    font_size = 10
+  )
   
-  # --- だめなら SaveAs2 にフォールバック ---
-  if (!ok) {
+  doc2 <- read_docx() %>%
+    body_set_default_section(ps) %>%
+    body_add_flextable(ft2)
+  print(doc2, target = out_doc2)
+  
+  message("Saved:")
+  message(out_doc1)
+  message(out_doc2)
+  
+  library(RDCOMClient)
+  
+  convert_docx_to_pdf <- function(docx_path, pdf_path) {
+    docx_path <- normalizePath(docx_path, winslash = "\\", mustWork = TRUE)
+    pdf_path  <- normalizePath(pdf_path,  winslash = "\\", mustWork = FALSE)
+    
+    # --- Word起動（既存があれば掴む、なければ作る） ---
+    word <- NULL
+    word <- tryCatch(COMGetActiveObject("Word.Application"), error = function(e) NULL)
+    if (is.null(word)) {
+      word <- COMCreate("Word.Application")
+    }
+    
+    # Visible は環境によって無いことがあるので触らない（←今回の回避点）
+    # word[["Visible"]] <- FALSE
+    
+    # --- docxを開く（ReadOnly, AddToRecentFiles=FALSE） ---
+    docs <- word$Documents()
+    doc  <- docs$Open(docx_path, ReadOnly = TRUE, AddToRecentFiles = FALSE)
+    
+    # --- PDF保存：ExportAsFixedFormat が最も安定 ---
+    ok <- FALSE
     try({
-      # 17 = wdFormatPDF
-      doc$SaveAs2(pdf_path, FileFormat = 17)
+      # 17 = wdExportFormatPDF
+      # 0 = wdExportOptimizeForPrint
+      doc$ExportAsFixedFormat(
+        OutputFileName = pdf_path,
+        ExportFormat   = 17,
+        OpenAfterExport = FALSE,
+        OptimizeFor     = 0
+      )
       ok <- TRUE
     }, silent = TRUE)
+    
+    # --- だめなら SaveAs2 にフォールバック ---
+    if (!ok) {
+      try({
+        # 17 = wdFormatPDF
+        doc$SaveAs2(pdf_path, FileFormat = 17)
+        ok <- TRUE
+      }, silent = TRUE)
+    }
+    
+    # --- 後片付け ---
+    doc$Close(FALSE)
+    
+    # ここは「自分で起動したWordだけ閉じたい」けど判定が難しいので、
+    # いったん Quit しない（Wordが勝手に閉じるのが嫌な場合）
+    # 必要なら次行を有効化
+    # word$Quit()
+    
+    if (!ok) stop("PDF conversion failed. (ExportAsFixedFormat / SaveAs2 both failed)")
+    invisible(TRUE)
   }
   
-  # --- 後片付け ---
-  doc$Close(FALSE)
+  # ---- ファイル指定 ----
+  docx1 <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.docx"
+  docx2 <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.docx"
   
-  # ここは「自分で起動したWordだけ閉じたい」けど判定が難しいので、
-  # いったん Quit しない（Wordが勝手に閉じるのが嫌な場合）
-  # 必要なら次行を有効化
-  # word$Quit()
+  pdf1  <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.pdf"
+  pdf2  <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.pdf"
   
-  if (!ok) stop("PDF conversion failed. (ExportAsFixedFormat / SaveAs2 both failed)")
-  invisible(TRUE)
-}
-
-# ---- ファイル指定 ----
-docx1 <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.docx"
-docx2 <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.docx"
-
-pdf1  <- "X:/R/word_supp_tables/Supplementary_Table_1_Drugs_portrait_readable.pdf"
-pdf2  <- "X:/R/word_supp_tables/Supplementary_Table_2_ICD10_portrait_readable.pdf"
-
-# ---- 実行 ----
-convert_docx_to_pdf(docx1, pdf1)
-convert_docx_to_pdf(docx2, pdf2)
-
-message("PDF conversion completed.")
-
+  # ---- 実行 ----
+  convert_docx_to_pdf(docx1, pdf1)
+  convert_docx_to_pdf(docx2, pdf2)
+  
+  message("PDF conversion completed.")
+  
 } #word,PDF変換
 
 
 #すべての図表をまとめる
 {
-############################################################
-# Merge selected PDFs (exact filenames from screenshot)
-############################################################
-
-# ---- 必要パッケージ ----
-if (!requireNamespace("pdftools", quietly = TRUE)) {
-  install.packages("pdftools")
-}
-library(pdftools)
-
-# ---- フォルダ ----
-dir_in  <- "X:/R/figure_table"
-out_pdf <- file.path(dir_in, "Merged_Figures_All.pdf")
-
-# ---- スクショ通りの正確なPDF名 ----
-pdf_files <- c(
-  "Figure1_flowchart_AKD.pdf",
-  "Figure2_primary_KM.pdf",
-  "Figure3A_observed_eGFR_trajectory_and_slope_1y.pdf",
-  "Figure4_sensitivity_KM.pdf",
-  "Figure5A_sens_observed_eGFR_trajectory_and_slope_1y.pdf",
-  "SupplementalFigure1A_main_observed_eGFR_trajectory_and_bar_3y_all.pdf",
-  "SupplementalFigure2A_sensitivity_observed_eGFR_trajectory_and_bar_3y_all.pdf",
-  "SupplementalFigure3_interaction_forest_CKD_check.pdf",
-  "Supplementary_Figure4_ForestPlot_Overall_AgeSubgroup.pdf",
-  "Supplementary_Figure5_AgeContinuousInteraction.pdf"
-)
-
-# ---- フルパス化 ----
-pdf_paths <- file.path(dir_in, pdf_files)
-
-# ---- 存在チェック ----
-missing <- pdf_paths[!file.exists(pdf_paths)]
-if (length(missing)) {
-  stop("These PDF files were not found:\n", paste(missing, collapse = "\n"))
-}
-
-# ---- 出力ファイルが開いていれば削除 ----
-if (file.exists(out_pdf)) {
-  file.remove(out_pdf)
-}
-
-# ---- 結合 ----
-pdf_combine(pdf_paths, output = out_pdf)
-
-cat("Merged successfully:\n", out_pdf)
+  ############################################################
+  # Merge selected PDFs (exact filenames from screenshot)
+  ############################################################
+  
+  # ---- 必要パッケージ ----
+  if (!requireNamespace("pdftools", quietly = TRUE)) {
+    install.packages("pdftools")
+  }
+  library(pdftools)
+  
+  # ---- フォルダ ----
+  dir_in  <- "X:/R/figure_table"
+  out_pdf <- file.path(dir_in, "Merged_Figures_All.pdf")
+  
+  # ---- スクショ通りの正確なPDF名 ----
+  pdf_files <- c(
+    "Figure1_flowchart_AKD.pdf",
+    "Figure2_primary_KM.pdf",
+    "Figure3A_observed_eGFR_trajectory_and_slope_1y.pdf",
+    "Figure4_sensitivity_KM.pdf",
+    "Figure5A_sens_observed_eGFR_trajectory_and_slope_1y.pdf",
+    "SupplementalFigure1A_main_observed_eGFR_trajectory_and_bar_3y_all.pdf",
+    "SupplementalFigure2A_sensitivity_observed_eGFR_trajectory_and_bar_3y_all.pdf",
+    "SupplementalFigure3_interaction_forest_CKD_check.pdf",
+    "Supplementary_Figure4_ForestPlot_Overall_AgeSubgroup.pdf",
+    "Supplementary_Figure5_AgeContinuousInteraction.pdf"
+  )
+  
+  # ---- フルパス化 ----
+  pdf_paths <- file.path(dir_in, pdf_files)
+  
+  # ---- 存在チェック ----
+  missing <- pdf_paths[!file.exists(pdf_paths)]
+  if (length(missing)) {
+    stop("These PDF files were not found:\n", paste(missing, collapse = "\n"))
+  }
+  
+  # ---- 出力ファイルが開いていれば削除 ----
+  if (file.exists(out_pdf)) {
+    file.remove(out_pdf)
+  }
+  
+  # ---- 結合 ----
+  pdf_combine(pdf_paths, output = out_pdf)
+  
+  cat("Merged successfully:\n", out_pdf)
 } #FigureをPDFまとめ
 {
-############################################################
-# Merge selected Word files into ONE document
-#  - Switch section orientation (portrait/landscape) per file
-#  - Add page break between documents
-############################################################
-
-pkgs <- c("officer","stringr","fs")
-to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
-if (length(to_install)) install.packages(to_install, dependencies = TRUE)
-
-library(officer)
-library(stringr)
-library(fs)
-
-# ---- folder ----
-dir_in <- "X:/R/figure_table"   # ←あなたのフォルダ
-stopifnot(dir_exists(dir_in))
-
-out_docx <- file.path(dir_in, "Merged_Tables_Selected_fit.docx")
-
-files <- c(
-  "Supplementary_Table_1_Drugs_portrait_readable.docx",
-  "Supplementary_Table_2_ICD10_portrait_readable.docx",
-  "Table_3_sensitivity_HR.docx",
-  "Table1_Baseline_with_CKD_1page.docx",
-  "Table2_primary_HR.docx"
-)
-
-paths <- file.path(dir_in, files)
-missing <- paths[!file.exists(paths)]
-if (length(missing)) stop("Not found:\n", paste(missing, collapse = "\n"))
-
-if (file.exists(out_docx)) {
-  ok <- tryCatch(file.remove(out_docx), error = function(e) FALSE)
-  if (!isTRUE(ok)) stop("Close the output docx first: ", out_docx)
-}
-
-# ==========================================================
-# Section settings
-#  - A4 portrait/landscape, slightly tight margins
-# ==========================================================
-sec_portrait <- prop_section(
-  page_size = page_size(width = 8.27, height = 11.69),     # A4 portrait (inch)
-  page_margins = page_mar(top = 0.55, bottom = 0.55, left = 0.55, right = 0.55,
-                          header = 0.25, footer = 0.25)
-)
-
-sec_landscape <- prop_section(
-  page_size = page_size(width = 11.69, height = 8.27),     # A4 landscape (inch)
-  page_margins = page_mar(top = 0.45, bottom = 0.45, left = 0.45, right = 0.45,
-                          header = 0.25, footer = 0.25)
-)
-
-# ---- “横向きにしたいファイル”を指定（広い表があるものだけ）----
-# まずは Baseline table がはみ出すことが多いので landscape 推奨
-landscape_files <- c(
-  "Table1_Baseline_with_CKD_1page.docx"
-)
-# もし他もはみ出すならここに追加してください
-# landscape_files <- c("Table1_Baseline_with_CKD_1page.docx","...")
-
-# ==========================================================
-# Merge
-# ==========================================================
-doc <- read_docx() |> body_set_default_section(sec_portrait)
-
-for (i in seq_along(paths)) {
+  ############################################################
+  # Merge selected Word files into ONE document
+  #  - Switch section orientation (portrait/landscape) per file
+  #  - Add page break between documents
+  ############################################################
   
-  f <- basename(paths[i])
-  is_land <- f %in% landscape_files
+  pkgs <- c("officer","stringr","fs")
+  to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(to_install)) install.packages(to_install, dependencies = TRUE)
   
-  # ---- セクション切替（次に入れる文書に合わせる）----
-  # ※「continuous section」で切替（ページは続くが向きだけ変わる）
-  if (is_land) {
-    doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_landscape)
-  } else {
-    doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_portrait)
+  library(officer)
+  library(stringr)
+  library(fs)
+  
+  # ---- folder ----
+  dir_in <- "X:/R/figure_table"   # ←あなたのフォルダ
+  stopifnot(dir_exists(dir_in))
+  
+  out_docx <- file.path(dir_in, "Merged_Tables_Selected_fit.docx")
+  
+  files <- c(
+    "Supplementary_Table_1_Drugs_portrait_readable.docx",
+    "Supplementary_Table_2_ICD10_portrait_readable.docx",
+    "Table_3_sensitivity_HR.docx",
+    "Table1_Baseline_with_CKD_1page.docx",
+    "Table2_primary_HR.docx"
+  )
+  
+  paths <- file.path(dir_in, files)
+  missing <- paths[!file.exists(paths)]
+  if (length(missing)) stop("Not found:\n", paste(missing, collapse = "\n"))
+  
+  if (file.exists(out_docx)) {
+    ok <- tryCatch(file.remove(out_docx), error = function(e) FALSE)
+    if (!isTRUE(ok)) stop("Close the output docx first: ", out_docx)
   }
   
-  # (optional) 見出し（不要ならコメントアウトOK）
-  heading_txt <- str_replace(f, "\\.docx$", "")
-  doc <- doc |>
-    body_add_par(heading_txt, style = "heading 1") |>
-    body_add_par("", style = "Normal")
+  # ==========================================================
+  # Section settings
+  #  - A4 portrait/landscape, slightly tight margins
+  # ==========================================================
+  sec_portrait <- prop_section(
+    page_size = page_size(width = 8.27, height = 11.69),     # A4 portrait (inch)
+    page_margins = page_mar(top = 0.55, bottom = 0.55, left = 0.55, right = 0.55,
+                            header = 0.25, footer = 0.25)
+  )
   
-  # ---- docx を挿入 ----
-  doc <- body_add_docx(doc, src = paths[i])
+  sec_landscape <- prop_section(
+    page_size = page_size(width = 11.69, height = 8.27),     # A4 landscape (inch)
+    page_margins = page_mar(top = 0.45, bottom = 0.45, left = 0.45, right = 0.45,
+                            header = 0.25, footer = 0.25)
+  )
   
-  # ---- 次の文書との区切り：改ページ（最後以外）----
-  if (i < length(paths)) {
-    doc <- body_add_break(doc, pos = "after")
+  # ---- “横向きにしたいファイル”を指定（広い表があるものだけ）----
+  # まずは Baseline table がはみ出すことが多いので landscape 推奨
+  landscape_files <- c(
+    "Table1_Baseline_with_CKD_1page.docx"
+  )
+  # もし他もはみ出すならここに追加してください
+  # landscape_files <- c("Table1_Baseline_with_CKD_1page.docx","...")
+  
+  # ==========================================================
+  # Merge
+  # ==========================================================
+  doc <- read_docx() |> body_set_default_section(sec_portrait)
+  
+  for (i in seq_along(paths)) {
+    
+    f <- basename(paths[i])
+    is_land <- f %in% landscape_files
+    
+    # ---- セクション切替（次に入れる文書に合わせる）----
+    # ※「continuous section」で切替（ページは続くが向きだけ変わる）
+    if (is_land) {
+      doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_landscape)
+    } else {
+      doc <- doc |> body_end_section_continuous() |> body_set_default_section(sec_portrait)
+    }
+    
+    # (optional) 見出し（不要ならコメントアウトOK）
+    heading_txt <- str_replace(f, "\\.docx$", "")
+    doc <- doc |>
+      body_add_par(heading_txt, style = "heading 1") |>
+      body_add_par("", style = "Normal")
+    
+    # ---- docx を挿入 ----
+    doc <- body_add_docx(doc, src = paths[i])
+    
+    # ---- 次の文書との区切り：改ページ（最後以外）----
+    if (i < length(paths)) {
+      doc <- body_add_break(doc, pos = "after")
+    }
   }
-}
-
-print(doc, target = out_docx)
-message("Saved: ", out_docx)
+  
+  print(doc, target = out_docx)
+  message("Saved: ", out_docx)
 } #Tableをwordまとめ
 
