@@ -287,23 +287,25 @@ make_pub_plot <- function(df_in, facet_by_window = TRUE, show_diff = TRUE, show_
   y_min <- min(df_in$lower, na.rm = TRUE)
   y_max <- max(df_in$upper, na.rm = TRUE)
   
+  # ============================
+  # ★ Diff と p-value の「縦位置」をここで決める（間隔ノブ）
+  # ============================
+  diff_y <- y_min - 3.2
+  p_y    <- y_min - 5.2   # ← ここを大きくすると、pがさらに下に行ってDiffと離れる
+  
   p <- ggplot(df_in, aes(x = group, y = estimate, fill = group)) +
     geom_col(width = 0.7, alpha = 0.85) +
     geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.25, linewidth = 0.7) +
     geom_text(aes(y = pmax(upper, 0) + 0.5, label = paste0("n=", n)),
               size = 3.5, fontface = "bold", color = "grey20") +
-    # ★削除：annual eGFR change の Estimate + 95%CI 表示（固定効果の数値）
-    # geom_text(aes(y = pmin(lower, 0) - 0.8,
-    #               label = sprintf("%.2f\n(%.2f, %.2f)", estimate, lower, upper)),
-    #           size = 3, lineheight = 0.95, color = "grey10") +
     labs(
       x = NULL,
-      y = expression(paste("Mean change in eGFR (mL/min/1.73 m"^2," per year)")),
+      # ★ expressionをやめて空白問題も回避（m²を使う）
+      y = "Mean change in eGFR (mL/min/1.73 m² per year)",
       fill = "Group"
     ) +
     scale_fill_manual(
       values = c(nonAKD = "#95A5A6", Recovery = "#2ECC71", `Non-Recovery` = "#E74C3C"),
-      # ★ここだけ変更：表示上 “Recovery”→“recovery”
       labels = c(
         nonAKD = "Non AKD",
         Recovery = "AKD with recovery",
@@ -311,7 +313,8 @@ make_pub_plot <- function(df_in, facet_by_window = TRUE, show_diff = TRUE, show_
       )
     ) +
     scale_x_discrete(expand = expansion(add = 0.6)) +
-    coord_cartesian(ylim = c(y_min - 5.8, y_max + 1.5), clip = "off") +
+    # ★ ここが「pを下にした分、下端で切れないようにする」修正点
+    coord_cartesian(ylim = c(y_min - 6.8, y_max + 1.5), clip = "off") +
     theme_classic(base_size = 13) +
     theme(
       panel.grid = element_blank(),
@@ -329,19 +332,24 @@ make_pub_plot <- function(df_in, facet_by_window = TRUE, show_diff = TRUE, show_
       plot.margin = margin(t = 5, r = 20, b = 15, l = 25)
     )
   
-  # ---- Difference vs nonAKD（これだけ残す）----
+  # ============================
+  # ★ Difference vs nonAKD（Referenceもここで入れる）
+  # ============================
   if (show_diff) {
     p <- p +
       geom_text(
-        aes(label = ifelse(group == "nonAKD", "",
+        aes(label = ifelse(group == "nonAKD",
+                           "Reference",
                            sprintf("Diff: %.2f\n(%.2f, %.2f)", diff_value, diff_lower, diff_upper))),
-        y = y_min - 3.6,
+        y = diff_y,                       # ★ここ：y_min - 3.6 → diff_y に置換
         size = 3, lineheight = 0.95,
         fontface = "italic", color = "grey30"
       )
   }
   
-  # ---- p-value text（必要なら残す）----
+  # ============================
+  # ★ p-value text（Diffと離すために p_y を使う）
+  # ============================
   if (show_p) {
     p <- p +
       geom_text(
@@ -349,10 +357,10 @@ make_pub_plot <- function(df_in, facet_by_window = TRUE, show_diff = TRUE, show_
                            dplyr::case_when(
                              is.na(diff_p) ~ "",
                              diff_p < 0.001 ~ "p<0.001",
-                             diff_p < 0.01 ~ sprintf("p=%.3f", diff_p),
-                             TRUE ~ sprintf("p=%.2f", diff_p)
+                             diff_p < 0.01  ~ sprintf("p=%.3f", diff_p),
+                             TRUE           ~ sprintf("p=%.2f", diff_p)
                            ))),
-        y = y_min - 4.7,
+        y = p_y,                          # ★ここ：y_min - 4.7 → p_y に置換
         size = 2.9,
         fontface = "bold", color = "grey20"
       )
@@ -364,7 +372,6 @@ make_pub_plot <- function(df_in, facet_by_window = TRUE, show_diff = TRUE, show_
   
   p
 }
-
 # ---- Rebuild plots ----
 p_supp_fig1 <- make_pub_plot(df_fig_enhanced, facet_by_window = TRUE)
 
@@ -385,12 +392,12 @@ outdir <- "X:/R"   # <- adjust if needed
 w_mm <- 200; h_mm <- 140
 
 # ---- Supplement Figure 1 ----
-ggsave(file.path(outdir, "SupplementFigure1_eGFR_slope_adj_3windows.pdf"),
+ggsave(file.path(outdir, "SupplementFigure2_eGFR_slope_adj_3windows.pdf"),
        plot = p_supp_fig1,
        width = w_mm, height = h_mm, units = "mm",
        device = cairo_pdf, dpi = 300)
 
-ggsave(file.path(outdir, "SupplementFigure1_eGFR_slope_adj_3windows.tiff"),
+ggsave(file.path(outdir, "SupplementFigure2_eGFR_slope_adj_3windows.tiff"),
        plot = p_supp_fig1,
        width = w_mm, height = h_mm, units = "mm",
        device = "tiff", dpi = 600, compression = "lzw")
@@ -528,7 +535,7 @@ p_obs_egfr_1y <- ggplot(newdat_pred,
   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.15, linewidth = 0) +
   geom_line(linewidth = 1.1) +
   labs(
-    title = "Observed eGFR trajectory (window-aligned)",
+    title = "Observed change in eGFR from time0",
     x = "Time from time0 (years)",
     y = expression(paste("Observed eGFR (mL/min/1.73 m"^2, ")")),
     color = "Group", fill = "Group"
@@ -554,7 +561,7 @@ p_obs_egfr_1y_bar <- ggplot(newdat_pred,
   geom_errorbar(data = bar_dat, aes(ymin = lwr, ymax = upr),
                 width = 0.03, linewidth = 0.7) +
   labs(
-    title = "Observed eGFR trajectory (window-aligned)",
+    title = "Observed change in eGFR from time0",
     x = "Time from time0 (years)",
     y = expression(paste("Observed eGFR (mL/min/1.73 m"^2, ")")),
     color = "Group"
@@ -655,7 +662,7 @@ p_obs_delta_1y <- ggplot(newdat_delta,
   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.15, linewidth = 0) +
   geom_line(linewidth = 1.1) +
   labs(
-    title = "Observed ΔeGFR trajectory (window-aligned; baseline = time0)",
+    title = "Observed change in eGFR from time0",
     x = "Time from time0 (years)",
     y = expression(paste(Delta,"eGFR (mL/min/1.73 m"^2,")")),
     color = "Group", fill = "Group"
@@ -681,7 +688,7 @@ p_obs_delta_1y_bar <- ggplot(newdat_delta,
   geom_errorbar(data = bar_dat_delta, aes(ymin = lwr, ymax = upr),
                 width = 0.03, linewidth = 0.7) +
   labs(
-    title = "Observed ΔeGFR trajectory (window-aligned; baseline = time0)",
+    title = "Observed change in eGFR from time0",
     x = "Time from time0 (years)",
     y = expression(paste(Delta,"eGFR (mL/min/1.73 m"^2,")")),
     color = "Group"
@@ -733,17 +740,16 @@ dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 p_fig4_for_fig3 <- p_fig4 +
   labs(
     tag   = "B",
-    title = "Adjusted differences in annual eGFR change within 1 year",
-    y     = expression(paste("Mean change in eGFR \n(mL/min/1.73 m"^2," per year)"))
+    title = "Adjusted differences in annual eGFR change",
+    y     = "Mean change in eGFR\n(mL/min/1.73 m² per year)"
   ) +
   scale_x_discrete(expand = expansion(add = 0.8)) +
   theme(
     plot.title = element_text(size = 12, face = "bold", hjust = 0),
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98),
+    plot.tag.position = c(0, 1.00),
     plot.margin = margin(t = 5, r = 40, b = 20, l = 40)
   )
-
 # =========================================================
 # 2) Figure 3-1：Observed eGFR（実測） + bar
 # =========================================================
@@ -757,77 +763,69 @@ p_line_egfr <- p_obs_egfr_1y_bar +
     plot.margin = margin(b = 5),
     legend.position = "right",
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98)
+    plot.tag.position = c(0, 1.00)
   )
 
 fig3_egfr <- p_line_egfr / p_fig4_for_fig3 +
-  plot_layout(heights = c(2.5, 5.5)) +
-  plot_annotation(
-    title = "Figure 3. Observed eGFR trajectory and slope differences\nwithin 1 year after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.5, 5.5))
 
 print(fig3_egfr)
 
-ggsave(
-  filename = file.path(outdir, "Figure3A_observed_eGFR_trajectory_and_slope_1y.pdf"),
-  plot  = fig3_egfr,
-  width = 230, height = 180, units = "mm",
-  device = cairo_pdf
-)
+#ggsave(
+#  filename = file.path(outdir, "Figure3A_observed_eGFR_trajectory_and_slope_1y.pdf"),
+#  plot  = fig3_egfr,
+#  width = 230, height = 180, units = "mm",
+#  device = cairo_pdf
+#)
 
-ggsave(
-  filename = file.path(outdir, "Figure3A_observed_eGFR_trajectory_and_slope_1y.tiff"),
-  plot  = fig3_egfr,
-  width = 230, height = 180, units = "mm",
-  device = ragg::agg_tiff,
-  dpi = 600, compression = "lzw"
-)
+#ggsave(
+#  filename = file.path(outdir, "Figure3A_observed_eGFR_trajectory_and_slope_1y.tiff"),
+#  plot  = fig3_egfr,
+#  width = 230, height = 180, units = "mm",
+#  device = ragg::agg_tiff,
+#  dpi = 600, compression = "lzw"
+#)
 
 # =========================================================
 # 3) Figure 3-2：Observed ΔeGFR（変化量） + bar
 # =========================================================
+base_family <- "sans"   # ← Arialにしたいなら "Arial"
+
+common_theme <- theme(
+  text = element_text(family = base_family),
+  plot.title = element_text(family = base_family, face = "bold"),
+  plot.tag   = element_text(family = base_family, face = "bold", size = 14)
+)
 p_line_delta <- p_obs_delta_1y_bar +
   labs(
     tag = "A",
     x = "Time from time0 (year)",
-    y = expression(paste(Delta,"eGFR\n(mL/min/1.73 m"^2,")"))
+    y = expression(paste(Delta, "eGFR(mL/min/1.73 m"^2, ")"))
   ) +
   theme(
     plot.margin = margin(b = 5),
     legend.position = "right",
-    plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98)
+    plot.tag.position = c(0, 1.00)
+  ) +
+  common_theme
+
+  fig3_delta <- p_line_delta / p_fig4_for_fig3 +
+    plot_layout(heights = c(2.5, 5.5))
+  print(fig3_delta)
+  
+  ggsave(
+    filename = file.path(outdir, "Figure3B_observed_delta_eGFR_trajectory_and_slope_1y.pdf"),
+    plot  = fig3_delta,
+    width = 230, height = 180, units = "mm",
+    device = cairo_pdf
   )
-
-fig3_delta <- p_line_delta / p_fig4_for_fig3 +
-  plot_layout(heights = c(2.5, 5.5)) +
-  plot_annotation(
-    title = "Figure 3. Observed ΔeGFR trajectory and slope differences\nwithin 1 year after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
-
-print(fig3_delta)
-
-ggsave(
-  filename = file.path(outdir, "Figure3B_observed_delta_eGFR_trajectory_and_slope_1y.pdf"),
-  plot  = fig3_delta,
-  width = 230, height = 180, units = "mm",
-  device = cairo_pdf
-)
-
-ggsave(
-  filename = file.path(outdir, "Figure3B_observed_delta_eGFR_trajectory_and_slope_1y.tiff"),
-  plot  = fig3_delta,
-  width = 230, height = 180, units = "mm",
-  device = ragg::agg_tiff,
-  dpi = 600, compression = "lzw"
+  
+  ggsave(
+    filename = file.path(outdir, "Figure3B_observed_delta_eGFR_trajectory_and_slope_1y.tiff"),
+    plot  = fig3_delta,
+    width = 230, height = 180, units = "mm",
+    device = ragg::agg_tiff,
+    dpi = 600, compression = "lzw"
 )
 }#1年以内の折れ線グラフと下向き棒グラフの結合
 {
@@ -1020,9 +1018,10 @@ make_Apanel <- function(traj_df, y_lab) {
 p_supp1A_egfr <- make_Apanel(traj_supp1A_egfr,
                              "Observed eGFR\n(mL/min/1.73 m²)")
 
-p_supp1A_delta <- make_Apanel(traj_supp1A_delta,
-                              expression(paste("Observed ", Delta, "eGFR\n(mL/min/1.73 m"^2,")")))
-
+p_supp1A_delta <- make_Apanel(
+  traj_supp1A_delta,
+  expression(paste(Delta, "eGFR (mL/min/1.73 m"^2, ")"))
+)
 # ==========================================================
 # 4) Plot B: downward bars（共通）— Diff only（vs nonAKD）
 # ==========================================================
@@ -1082,11 +1081,11 @@ p_supp1B <- ggplot(df_bar_supp1B, aes(x = group, y = estimate, fill = group)) +
 # ==========================================================
 # --- Ver-A: eGFR ---
 p_supp1A_egfr_tag <- p_supp1A_egfr +
-  labs(tag = "A", title = "Observed eGFR trajectory (window-aligned)") +
+  labs(tag = "A", title = "Observed change in eGFR from time0") +
   theme(
     plot.title = element_text(size = 12, face = "bold", hjust = 0),
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98)
+    plot.tag.position = c(0, 1.00)
   )
 
 p_supp1B_tag <- p_supp1B +
@@ -1094,74 +1093,55 @@ p_supp1B_tag <- p_supp1B +
   theme(
     plot.title = element_text(size = 12, face = "bold", hjust = 0),
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98)
+    plot.tag.position = c(0, 1.00)
   )
 
 supp_fig1_main_egfr <- p_supp1A_egfr_tag / p_supp1B_tag +
-  plot_layout(heights = c(2.3, 3.3)) +
-  plot_annotation(
-    title = "Supplemental Figure 1. Observed eGFR trajectory and slope differences\nwithin 3 years and all period after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.3, 3.3)) 
 
 # --- Ver-B: ΔeGFR ---
 p_supp1A_delta_tag <- p_supp1A_delta +
-  labs(tag = "A", title = "Observed ΔeGFR trajectory (window-aligned; baseline = time0)") +
+  labs(tag = "A", title = "Observed change in eGFR from time0") +
   theme(
     plot.title = element_text(size = 12, face = "bold", hjust = 0),
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98)
+    plot.tag.position = c(0, 1.00)
   )
 
 supp_fig1_main_delta <- p_supp1A_delta_tag / p_supp1B_tag +
-  plot_layout(heights = c(2.3, 3.3)) +
-  plot_annotation(
-    title = "Supplemental Figure 1. Observed ΔeGFR trajectory and slope differences\nwithin 3 years and all period after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.3, 3.3)) 
 
 print(supp_fig1_main_egfr)
 print(supp_fig1_main_delta)
+# どれでもOK（Windowsなら "sans" が無難。見た目を固定したいなら "Arial" 等）
+base_family <- "sans"
 
+title_theme <- theme(
+  text = element_text(family = base_family),
+  plot.title = element_text(family = base_family, size = 12, face = "bold", hjust = 0),
+  plot.tag   = element_text(family = base_family, face = "bold", size = 14)
+)
+
+p_supp1A_egfr_tag  <- p_supp1A_egfr_tag  + title_theme
+p_supp1A_delta_tag <- p_supp1A_delta_tag + title_theme
+p_supp1B_tag       <- p_supp1B_tag       + title_theme
 # ==========================================================
 # 6) Save (PDF + TIFF) — eGFRslope folder
 # ==========================================================
 ggsave(
-  filename = file.path(outdir, "SupplementalFigure1A_main_observed_eGFR_trajectory_and_bar_3y_all.pdf"),
-  plot  = supp_fig1_main_egfr,
-  width = 230, height = 180, units = "mm",
-  device = cairo_pdf
-)
-
-ggsave(
-  filename = file.path(outdir, "SupplementalFigure1A_main_observed_eGFR_trajectory_and_bar_3y_all.tiff"),
-  plot  = supp_fig1_main_egfr,
-  width = 230, height = 180, units = "mm",
-  device = ragg::agg_tiff,
-  dpi = 600, compression = "lzw"
-)
-
-ggsave(
-  filename = file.path(outdir, "SupplementalFigure1B_main_observed_delta_eGFR_trajectory_and_bar_3y_all.pdf"),
+  filename = file.path(outdir, "SupplementalFigure2_main_observed_delta_eGFR_trajectory_and_bar_3y_all.pdf"),
   plot  = supp_fig1_main_delta,
   width = 230, height = 180, units = "mm",
   device = cairo_pdf
 )
 
 ggsave(
-  filename = file.path(outdir, "SupplementalFigure1B_main_observed_delta_eGFR_trajectory_and_bar_3y_all.tiff"),
+  filename = file.path(outdir, "SupplementalFigure2_main_observed_delta_eGFR_trajectory_and_bar_3y_all.tiff"),
   plot  = supp_fig1_main_delta,
   width = 230, height = 180, units = "mm",
   device = ragg::agg_tiff,
   dpi = 600, compression = "lzw"
 )
-
 # ---- end ----
 }#3年以内と全期間
 {
@@ -1387,8 +1367,26 @@ lab_group <- c(nonAKD="Non-AKD", Recovery="AKD with recovery", `Non-Recovery`="A
 traj_sens_1y_egfr  <- make_traj_sens_1y(akd_time_sens, metric = "egfr")
 traj_sens_1y_delta <- make_traj_sens_1y(akd_time_sens, metric = "delta")
 
+# -----------------------------
+# FONT/Title unify (Figure5)
+# -----------------------------
+BASE_SIZE_UNIFIED <- 13
+common_theme_all <- theme(
+  text = element_text(family = "sans"),
+  plot.title = element_text(size = 12, face = "bold", hjust = 0),
+  
+  plot.tag   = element_text(face = "bold", size = 14),
+  plot.tag.position = c(0.06, 0.985),   # ★xを0→0.06へ（右へ）＋少し下へ
+  
+  # 念のため：y軸タイトルも少し左へ
+  axis.title.y = element_text(margin = margin(r = 18)),
+  
+  # 左余白も確保（tagとy軸が詰まるのを防ぐ）
+  plot.margin = margin(t = 4, r = 5, b = 5, l = 18)
+)
+
 # ---- 5A plot maker ----
-make_p_fig5A <- function(traj_df, y_lab) {
+make_p_fig5A <- function(traj_df, y_lab, main_title = NULL) {
   ggplot(traj_df,
          aes(x = target_time, y = mean_value,
              color = jin_label_sens, group = jin_label_sens)) +
@@ -1397,28 +1395,31 @@ make_p_fig5A <- function(traj_df, y_lab) {
     geom_errorbar(aes(ymin = lwr, ymax = upr),
                   width = 0.04, linewidth = 0.7) +
     labs(
-      tag = "A",
-      x = "Time from time0 (year)",
-      y = y_lab,
+      tag   = "A",
+      title = main_title,
+      x     = "Time from time0 (year)",
+      y     = y_lab,
       color = "Group"
     ) +
     scale_x_continuous(breaks = seq(0, 1, by = 0.25), limits = c(0, 1)) +
     scale_color_manual(values = col_group, labels = lab_group, drop = FALSE) +
-    theme_bw(base_size = 12) +
-    theme(
-      panel.grid.minor = element_blank(),
-      legend.position = "right",
-      plot.tag = element_text(face = "bold", size = 14),
-      plot.tag.position = c(0, 0.98)
-    )
+    theme_bw(base_size = BASE_SIZE_UNIFIED) +
+    theme(panel.grid.minor = element_blank(),
+          legend.position = "right") +
+    common_theme_all
 }
 
-p_fig5A_obs_egfr <- make_p_fig5A(traj_sens_1y_egfr,
-                                 "Observed eGFR\n(mL/min/1.73 m²)")
+p_fig5A_obs_egfr <- make_p_fig5A(
+  traj_sens_1y_egfr,
+  "Observed eGFR\n(mL/min/1.73 m²)",
+  main_title = NULL
+)
 
-p_fig5A_obs_delta <- make_p_fig5A(traj_sens_1y_delta,
-                                  expression(paste("Observed ", Delta, "eGFR\n(mL/min/1.73 m"^2,")")))
-
+p_fig5A_obs_delta <- make_p_fig5A(
+  traj_sens_1y_delta,
+  "\u0394eGFR (mL/min/1.73 m\u00B2)",     # ← 1行のΔeGFR(単位)
+  main_title = "Observed change in eGFR from time0"
+)
 # ==========================================================
 # 6) Slopes + Differences (reuse functions)  ※あなたのまま
 # ==========================================================
@@ -1550,47 +1551,34 @@ p_fig5B <- ggplot(df_1y, aes(x = group, y = estimate, fill = group)) +
                                ))),
             size = 3.0, fontface = "bold", color = "grey20") +
   labs(
-    tag = "B",
+    tag   = "B",
+    title = "Adjusted differences in annual eGFR change",
     x = NULL,
     y = "Mean change in eGFR\n(mL/min/1.73 m² per year)",
     fill = "Group"
   ) +
-  scale_fill_manual(values = col_group, labels = lab_group) +
+  scale_fill_manual(values = col_group, labels = lab_group, drop = FALSE) +
   scale_x_discrete(expand = expansion(add = 0.8)) +
   coord_cartesian(clip = "off") +
-  theme_classic(base_size = 13) +
+  theme_classic(base_size = BASE_SIZE_UNIFIED) +
   theme(
     panel.border = element_rect(color = "grey30", fill = NA, linewidth = 0.6),
-    axis.text.x = element_blank(),
+    axis.text.x  = element_blank(),
     axis.ticks.x = element_blank(),
     legend.position = "bottom",
-    plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98),
     plot.margin = margin(t = 5, r = 25, b = 20, l = 25)
-  )
-
+  ) +
+  common_theme_all
+fig5_delta <- p_fig5A_obs_delta / p_fig5B +
+  plot_layout(heights = c(2.5, 5.5))
 # ==========================================================
 # 8) Combine (A/B) — 2 versions
 # ==========================================================
 fig5_egfr <- p_fig5A_obs_egfr / p_fig5B +
-  plot_layout(heights = c(2.5, 5.5)) +
-  plot_annotation(
-    title = "Figure 5. Sensitivity analysis: observed eGFR trajectory and slope differences\nwithin 1 year after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.5, 5.5)) 
 
 fig5_delta <- p_fig5A_obs_delta / p_fig5B +
-  plot_layout(heights = c(2.5, 5.5)) +
-  plot_annotation(
-    title = "Figure 5. Sensitivity analysis: observed ΔeGFR trajectory and slope differences\nwithin 1 year after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.5, 5.5)) 
 
 print(fig5_egfr)
 print(fig5_delta)
@@ -1599,29 +1587,14 @@ print(fig5_delta)
 # 9) Save (PDF + TIFF) — sensitivity_analysis folder
 # ==========================================================
 ggsave(
-  filename = file.path(outdir, "Figure5A_sens_observed_eGFR_trajectory_and_slope_1y.pdf"),
-  plot  = fig5_egfr,
-  width = 230, height = 180, units = "mm",
-  device = cairo_pdf
-)
-
-ggsave(
-  filename = file.path(outdir, "Figure5A_sens_observed_eGFR_trajectory_and_slope_1y.tiff"),
-  plot  = fig5_egfr,
-  width = 230, height = 180, units = "mm",
-  device = ragg::agg_tiff,
-  dpi = 600, compression = "lzw"
-)
-
-ggsave(
-  filename = file.path(outdir, "Figure5B_sens_observed_delta_eGFR_trajectory_and_slope_1y.pdf"),
+  filename = file.path(outdir, "Supp_Figure3_sens_observed_delta_eGFR_trajectory_and_slope_1y.pdf"),
   plot  = fig5_delta,
   width = 230, height = 180, units = "mm",
   device = cairo_pdf
 )
 
 ggsave(
-  filename = file.path(outdir, "Figure5B_sens_observed_delta_eGFR_trajectory_and_slope_1y.tiff"),
+  filename = file.path(outdir, "Supp_Figure3_sens_observed_delta_eGFR_trajectory_and_slope_1y.tiff"),
   plot  = fig5_delta,
   width = 230, height = 180, units = "mm",
   device = ragg::agg_tiff,
@@ -1809,17 +1782,29 @@ make_p_supp2A <- function(traj_df, y_lab) {
     theme(
       panel.grid.minor = element_blank(),
       legend.position = "right",
+      
+      # --- tag（A）: 左上ギリギリを避ける ---
       plot.tag = element_text(face = "bold", size = 14),
-      plot.tag.position = c(0, 0.98)
+      plot.tag.position = c(0.02, 0.985),   # ★ここがポイント（Figure3寄せ）
+      
+      # --- y軸タイトル: 左へ逃す（ΔeGFRとAの干渉を防ぐ） ---
+      axis.title.y = element_text(margin = margin(r = 18)),
+      
+      # --- 外側余白: 左と上を少し増やす（見た目をFigure3に寄せる） ---
+      plot.margin = margin(t = 4, r = 5, b = 5, l = 18)
     )
 }
 
 p_supp2A_egfr <- make_p_supp2A(traj_supp2_egfr,
                                "Observed eGFR\n(mL/min/1.73 m²)")
 
-p_supp2A_delta <- make_p_supp2A(traj_supp2_delta,
-                                expression(paste("Observed ", Delta, "eGFR\n(mL/min/1.73 m"^2,")")))
+p_supp2A_delta <- make_p_supp2A(
+  traj_supp2_delta,
+  "ΔeGFR (mL/min/1.73 m²)"
+)
 
+p_supp2A_delta <- p_supp2A_delta +
+  labs(title = "Observed change in eGFR from time0")
 # ==========================================================
 # 4) Plot B: downward bars for ≤3y + All period (Diff only) — 共通
 #    - df_fig_sens を使用（あなたの既存成果物）
@@ -1849,7 +1834,7 @@ p_supp2B <- ggplot(df_bar_supp2, aes(x = group, y = estimate, fill = group)) +
             size = 3.1, lineheight = 0.95,
             fontface = "italic", color = "grey30") +
   geom_text(aes(y = y_pval,
-                label = ifelse(group == "nonAKD", "",
+                label = ifelse(group == "nonAKD", "Reference",
                                case_when(
                                  is.na(diff_p) ~ "",
                                  diff_p < 0.001 ~ "p<0.001",
@@ -1860,6 +1845,7 @@ p_supp2B <- ggplot(df_bar_supp2, aes(x = group, y = estimate, fill = group)) +
   facet_grid(. ~ window) +
   labs(
     tag = "B",
+    title = "Adjusted differences in annual eGFR change",
     x = NULL,
     y = "Mean change in eGFR\n(mL/min/1.73 m² per year)",
     fill = "Group"
@@ -1874,60 +1860,36 @@ p_supp2B <- ggplot(df_bar_supp2, aes(x = group, y = estimate, fill = group)) +
     axis.ticks.x = element_blank(),
     legend.position = "bottom",
     plot.tag = element_text(face = "bold", size = 14),
-    plot.tag.position = c(0, 0.98),
+    plot.tag.position = c(0, 1.00),
     plot.margin = margin(t = 5, r = 25, b = 20, l = 25)
   )
+common_title_theme <- theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0)
+)
 
+p_supp2A_delta <- p_supp2A_delta + common_title_theme
+p_supp2B       <- p_supp2B       + common_title_theme
 # ==========================================================
 # 5) Combine + Save (2 versions)
 # ==========================================================
 supp_fig2_egfr <- p_supp2A_egfr / p_supp2B +
-  plot_layout(heights = c(2.6, 5.4)) +
-  plot_annotation(
-    title = "Supplemental Figure 2. Sensitivity analysis: observed eGFR trajectory and slope differences\nwithin 3 years and all period after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.6, 5.4)) 
 
 supp_fig2_delta <- p_supp2A_delta / p_supp2B +
-  plot_layout(heights = c(2.6, 5.4)) +
-  plot_annotation(
-    title = "Supplemental Figure 2. Sensitivity analysis: observed ΔeGFR trajectory and slope differences\nwithin 3 years and all period after time0",
-    theme = theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0,
-                                margin = margin(b = 12))
-    )
-  )
+  plot_layout(heights = c(2.6, 5.4)) 
 
 print(supp_fig2_egfr)
 print(supp_fig2_delta)
 
 ggsave(
-  filename = file.path(outdir, "SupplementalFigure2A_sensitivity_observed_eGFR_trajectory_and_bar_3y_all.pdf"),
-  plot  = supp_fig2_egfr,
-  width = 230, height = 180, units = "mm",
-  device = cairo_pdf
-)
-
-ggsave(
-  filename = file.path(outdir, "SupplementalFigure2A_sensitivity_observed_eGFR_trajectory_and_bar_3y_all.tiff"),
-  plot  = supp_fig2_egfr,
-  width = 230, height = 180, units = "mm",
-  device = ragg::agg_tiff,
-  dpi = 600, compression = "lzw"
-)
-
-ggsave(
-  filename = file.path(outdir, "SupplementalFigure2B_sensitivity_observed_delta_eGFR_trajectory_and_bar_3y_all.pdf"),
+  filename = file.path(outdir, "SupplementalFigure4_sensitivity_observed_delta_eGFR_trajectory_and_bar_3y_all.pdf"),
   plot  = supp_fig2_delta,
   width = 230, height = 180, units = "mm",
   device = cairo_pdf
 )
 
 ggsave(
-  filename = file.path(outdir, "SupplementalFigure2B_sensitivity_observed_delta_eGFR_trajectory_and_bar_3y_all.tiff"),
+  filename = file.path(outdir, "SupplementalFigure4_sensitivity_observed_delta_eGFR_trajectory_and_bar_3y_all.tiff"),
   plot  = supp_fig2_delta,
   width = 230, height = 180, units = "mm",
   device = ragg::agg_tiff,
@@ -1937,3 +1899,6 @@ ggsave(
 # ---- end ----
 
 }#3年以内と全期間の折れ線グラフ
+
+
+

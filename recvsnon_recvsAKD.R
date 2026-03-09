@@ -256,7 +256,7 @@ geom_text(
 for (grp in levels_full) {
   yv  <- unique(risk_df$y[risk_df$group == grp])[1]
   lab <- unique(risk_df$group_disp[risk_df$group == grp])[1]
-  col <- pal[grp]
+  col <- if (grp == "non-AKD") "black" else pal[grp]
   
   p_risk <- p_risk +
     annotation_custom(
@@ -289,18 +289,11 @@ km_risk_block <- arrangeGrob(
 # Figure 2 object (KM only) + bottom blank (pack to upper half)
 # ==========================================================
 fig2_onlyKM <- arrangeGrob(
-  textGrob(
-    "Figure 2. Primary Outcome: All-Cause Mortality",
-    x = unit(0.02, "npc"),   # ← 左余白（0.02〜0.05で調整）
-    y = unit(0.95, "npc"),    # ← 上余白（0.9〜0.95で調整）
-    just = c("left", "top"),
-    gp = gpar(fontsize = 14, fontface = "bold")
-  ),
   p_leg,
   km_risk_block,
   nullGrob(),
   ncol = 1,
-  heights = c(0.10, fig2_heights)  # ← タイトル分を先頭に追加
+  heights = fig2_heights
 )
 
 # ==========================================================
@@ -352,6 +345,7 @@ tab2_onlyHR <- arrangeGrob(
            gp = gpar(fontsize = 12, fontface = "bold")),
   hr_grob, ncol = 1, heights = c(0.18, 1)
 )
+
 
 # ==========================================================
 # Draw (optional)
@@ -510,12 +504,12 @@ in_csv <- "jin1_Eligibile.csv"
 out_dir <- file.path("X:/R","sensitivity_analysis")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-out_fig4_tif <- file.path(out_dir,"Figure4_sensitivity_KM.tif")
-out_fig4_pdf <- file.path(out_dir,"Figure4_sensitivity_KM.pdf")
+out_fig4_tif <- file.path(out_dir, "Supplementary Figure1 Sensitivity Analysis KM.tif")
+out_fig4_pdf <- file.path(out_dir, "Supplementary Figure1 Sensitivity Analysis KM.pdf")
 
-out_tab4_tif <- file.path(out_dir,"Table_3_sensitivity_HR.tif")
-out_tab4_pdf <- file.path(out_dir,"Table_3_sensitivity_HR.pdf")
-out_tab4_csv <- file.path(out_dir,"Table_3_sensitivity_HR.csv")
+out_tab4_tif <- file.path(out_dir,"Supplementary Table_3_sensitivity_HR.tif")
+out_tab4_pdf <- file.path(out_dir,"Supplementary Table_3_sensitivity_HR.pdf")
+out_tab4_csv <- file.path(out_dir,"Supplementary Table_3_sensitivity_HR.csv")
 
 # ==========================================================
 # Load & build 1 row per patient (primaryと同じ)
@@ -699,7 +693,7 @@ p_risk <- ggplot() +
 for (grp in levels_full) {
   yv  <- unique(risk_df$y[risk_df$group == grp])[1]
   lab <- unique(risk_df$group_disp[risk_df$group == grp])[1]
-  col <- pal[grp]
+  col <- if (grp == "nonAKD") "black" else pal[grp]
   
   p_risk <- p_risk +
     annotation_custom(
@@ -732,18 +726,11 @@ km_risk_block <- arrangeGrob(
 # Figure 4 object (KM only) + bottom blank (pack to upper half)
 # ==========================================================
 fig4_onlyKM <- arrangeGrob(
-  textGrob(
-    "Figure 4. Sensitivity Analyses: All-Cause Mortality",
-    x = unit(0.02, "npc"),
-    y = unit(0.95, "npc"),
-    just = c("left", "top"),
-    gp = gpar(fontsize = 14, fontface = "bold")
-  ),
   p_leg,
   km_risk_block,
   nullGrob(),
   ncol = 1,
-  heights = c(0.10, fig4_heights)
+  heights = fig4_heights
 )
 
 # ==========================================================
@@ -1335,3 +1322,4 @@ for (i in seq_along(paths)) {
 print(doc, target = out_docx)
 message("Saved: ", out_docx)
 } #Tableをwordまとめ
+
