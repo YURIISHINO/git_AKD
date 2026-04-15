@@ -16,7 +16,7 @@
   # Packages
   # ==========================
   pkgs <- c("readr","dplyr","survival","broom","tibble",
-            "forestploter","grid","gridExtra","ragg")
+            "forestploter","grid","gridExtra","ragg","systemfonts")
   to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(to_install)) install.packages(to_install, dependencies = TRUE)
   
@@ -29,33 +29,33 @@
   library(grid)
   library(gridExtra)
   library(ragg)
+  library(parallel)
+  library(systemfonts)
   
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-  
+
   out_pdf_4  <- file.path(outdir, "Figure4_ForestPlot_Subgroups_Sex_Age_CKD_adjRD.pdf")
   out_tiff_4 <- file.path(outdir, "Figure4_ForestPlot_Subgroups_Sex_Age_CKD_adjRD.tiff")
   
   # ==========================
   # Font
   # ==========================
-  base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
-    if (length(ok) == 0) "sans" else ok[1]
-  }
-  
+  base_family <- "sans"   # pdf()-compatible; ragg TIFF uses system font via agg_tiff
+
   # ==========================
   # Parameters
   # ==========================
-  rd_horizon <- 5       # 最終版では 5-year RD として固定
-  n_boot_rd  <- 5    # 最終版
-  
+  rd_horizon   <- 5       # 5-year RD (fixed)
+  n_boot_rd    <- 1000L  # publication
+  n_boot_cores <- min(14L, parallel::detectCores(logical = FALSE))
+  set.seed(20250101L)
+
   # ==========================
   # Helpers
   # ==========================
@@ -168,54 +168,80 @@
   # G-computation for adjusted RD
   # ==========================
   gcomp_rd <- function(fit, data, horizon, group_var,
-                       ref_group = "nonAKD",
-                       target_groups = c("Recovery","Non-Recovery"),
-                       n_boot = 1000){
-    
-    marginal_risk <- function(fit_obj, dat, grp){
+                       ref_group     = "nonAKD",
+                       target_groups = c("Recovery", "Non-Recovery"),
+                       n_boot        = 1000L,
+                       n_cores       = 1L,
+                       seed          = 1234L) {
+
+    marginal_risk <- function(fit_obj, dat, grp) {
       dat_cf <- dat
       dat_cf[[group_var]] <- factor(grp, levels = levels(dat[[group_var]]))
-      
       sf <- survfit(fit_obj, newdata = dat_cf)
       s  <- summary(sf, times = horizon, extend = TRUE)
-      
       mean(1 - s$surv, na.rm = TRUE)
     }
-    
-    # point estimate
-    risk_ref <- marginal_risk(fit, data, ref_group)
-    
-    rd_point <- sapply(target_groups, function(g){
-      marginal_risk(fit, data, g) - risk_ref
-    })
-    
-    # bootstrap CI
-    rd_boot <- replicate(n_boot, {
-      idx <- sample(seq_len(nrow(data)), replace = TRUE)
-      boot_dat <- data[idx, , drop = FALSE]
-      
-      # factor levels を元データに合わせる
-      boot_dat[[group_var]] <- factor(boot_dat[[group_var]], levels = levels(data[[group_var]]))
-      
-      boot_fit <- update(fit, data = boot_dat)
-      
-      risk_ref_b <- marginal_risk(boot_fit, boot_dat, ref_group)
-      
-      sapply(target_groups, function(g){
-        marginal_risk(boot_fit, boot_dat, g) - risk_ref_b
-      })
-    })
-    
-    if (is.null(dim(rd_boot))) {
-      rd_boot <- matrix(rd_boot, nrow = length(target_groups))
-    }
-    
-    tibble(
-      Group   = target_groups,
-      RD      = as.numeric(rd_point),
-      RD_low  = apply(rd_boot, 1, quantile, probs = 0.025, na.rm = TRUE),
-      RD_high = apply(rd_boot, 1, quantile, probs = 0.975, na.rm = TRUE)
+
+    # point estimates
+    risk_ref    <- marginal_risk(fit, data, ref_group)
+    risk_tg_pt  <- sapply(target_groups, function(g) marginal_risk(fit, data, g))
+    rd_point    <- risk_tg_pt - risk_ref
+
+    # output includes ref group + target groups
+    k <- length(target_groups)
+    out <- bind_rows(
+      tibble(Group = ref_group,     adj_risk = risk_ref,            adj_risk_low = NA_real_, adj_risk_high = NA_real_,
+             RD = NA_real_,         RD_low   = NA_real_,            RD_high      = NA_real_, boot_n_success = NA_integer_),
+      tibble(Group = target_groups, adj_risk = as.numeric(risk_tg_pt), adj_risk_low = NA_real_, adj_risk_high = NA_real_,
+             RD = as.numeric(rd_point), RD_low = NA_real_,          RD_high      = NA_real_, boot_n_success = NA_integer_)
     )
+    if (is.null(n_boot) || n_boot <= 0L) return(out)
+
+    n   <- nrow(data)
+    lvl <- levels(data[[group_var]])
+    n_out <- 2L * k + 1L  # k RDs + 1 ref risk + k target risks
+
+    one_rep <- function(b) {
+      set.seed(seed + b)
+      idx      <- sample.int(n, size = n, replace = TRUE)
+      boot_dat <- data[idx, , drop = FALSE]
+      boot_dat[[group_var]] <- factor(boot_dat[[group_var]], levels = lvl)
+      boot_fit <- try(update(fit, data = boot_dat), silent = TRUE)
+      if (inherits(boot_fit, "try-error")) return(rep(NA_real_, n_out))
+      risk_ref_b <- try(marginal_risk(boot_fit, boot_dat, ref_group), silent = TRUE)
+      if (inherits(risk_ref_b, "try-error") || !is.finite(risk_ref_b))
+        return(rep(NA_real_, n_out))
+      risk_tg_b <- sapply(target_groups, function(g) {
+        v <- try(marginal_risk(boot_fit, boot_dat, g), silent = TRUE)
+        if (inherits(v, "try-error") || !is.finite(v)) return(NA_real_)
+        v
+      })
+      c(risk_tg_b - risk_ref_b, risk_ref_b, risk_tg_b)  # RDs, ref_risk, target_risks
+    }
+
+    # parallel bootstrap via mclapply (fork-based; Mac/Linux only)
+    boot_res  <- parallel::mclapply(seq_len(n_boot), one_rep,
+                                    mc.cores = n_cores, mc.preschedule = TRUE)
+    rd_boot   <- do.call(cbind, boot_res)          # n_out × n_boot
+    ok        <- apply(rd_boot, 2, function(x) all(is.finite(x)))
+    n_success <- sum(ok)
+    out$boot_n_success <- n_success
+
+    if (n_success < 50L) {
+      warning(sprintf("gcomp_rd: only %d successful replicates. CI not computed.", n_success))
+      return(out)
+    }
+    rd_mat       <- rd_boot[seq_len(k),          ok, drop = FALSE]   # RD rows
+    ref_risk_vec <- as.numeric(rd_boot[k + 1L,   ok])                # ref absolute risk
+    tg_risk_mat  <- rd_boot[(k + 2L):(2L*k + 1L), ok, drop = FALSE]  # target absolute risks
+
+    out$RD_low[2:(k+1)]        <- apply(rd_mat,      1, quantile, probs = 0.025, na.rm = TRUE)
+    out$RD_high[2:(k+1)]       <- apply(rd_mat,      1, quantile, probs = 0.975, na.rm = TRUE)
+    out$adj_risk_low[1]        <- quantile(ref_risk_vec,  probs = 0.025, na.rm = TRUE)
+    out$adj_risk_high[1]       <- quantile(ref_risk_vec,  probs = 0.975, na.rm = TRUE)
+    out$adj_risk_low[2:(k+1)]  <- apply(tg_risk_mat, 1, quantile, probs = 0.025, na.rm = TRUE)
+    out$adj_risk_high[2:(k+1)] <- apply(tg_risk_mat, 1, quantile, probs = 0.975, na.rm = TRUE)
+    out
   }
   
   # ==========================
@@ -484,11 +510,6 @@
   stats_age <- calc_stats_sub(dat_age, "age75_f", disp_agegrp)
   stats_ckd <- calc_stats_sub(dat_ckd, "ckd_bin", disp_ckdgrp)
   
-  risk5_overall <- km_risk5_overall(dat_overall, t0 = rd_horizon)
-  risk5_sex <- km_risk5_sub(dat_sex, "sex_f", function(x) dplyr::recode(x, "F" = "Female", "M" = "Male"), t0 = rd_horizon)
-  risk5_age <- km_risk5_sub(dat_age, "age75_f", disp_agegrp, t0 = rd_horizon)
-  risk5_ckd <- km_risk5_sub(dat_ckd, "ckd_bin", disp_ckdgrp, t0 = rd_horizon)
-  
   hr_overall <- extract_hr_overall(fit_overall)
   
   hr_sex0 <- hr_from_interaction(fit_sex, subgroup_levels = c("Female","Male"), int_suffix_other = "sex_fM")
@@ -521,89 +542,99 @@
   rd_overall <- gcomp_rd(
     fit_overall,
     dat_overall,
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1001L
   ) %>% mutate(Subgroup = "Overall")
-  
+
+  fit_female <- update(fit_overall, data = dat_sex %>% filter(sex_f == "F"))
   rd_female <- gcomp_rd(
-    update(fit_overall, data = dat_sex %>% filter(sex_f == "F")),
+    fit_female,
     dat_sex %>% filter(sex_f == "F"),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1002L
   ) %>% mutate(Subgroup = "Female")
-  
+
+  fit_male <- update(fit_overall, data = dat_sex %>% filter(sex_f == "M"))
   rd_male <- gcomp_rd(
-    update(fit_overall, data = dat_sex %>% filter(sex_f == "M")),
+    fit_male,
     dat_sex %>% filter(sex_f == "M"),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1003L
   ) %>% mutate(Subgroup = "Male")
-  
+
+  fit_lt75 <- update(fit_overall, data = dat_age %>% filter(age75_f == "lt75"))
   rd_lt75 <- gcomp_rd(
-    update(fit_overall, data = dat_age %>% filter(age75_f == "lt75")),
+    fit_lt75,
     dat_age %>% filter(age75_f == "lt75"),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1004L
   ) %>% mutate(Subgroup = "<75")
-  
+
+  fit_ge75 <- update(fit_overall, data = dat_age %>% filter(age75_f == "ge75"))
   rd_ge75 <- gcomp_rd(
-    update(fit_overall, data = dat_age %>% filter(age75_f == "ge75")),
+    fit_ge75,
     dat_age %>% filter(age75_f == "ge75"),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1005L
   ) %>% mutate(Subgroup = ">=75")
-  
+
+  fit_ckd_no <- update(fit_overall, data = dat_ckd %>% filter(ckd_bin == 0))
   rd_ckd_no <- gcomp_rd(
-    update(fit_overall, data = dat_ckd %>% filter(ckd_bin == 0)),
+    fit_ckd_no,
     dat_ckd %>% filter(ckd_bin == 0),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1006L
   ) %>% mutate(Subgroup = "CKD no")
-  
+
+  fit_ckd_yes <- update(fit_overall, data = dat_ckd %>% filter(ckd_bin == 1))
   rd_ckd_yes <- gcomp_rd(
-    update(fit_overall, data = dat_ckd %>% filter(ckd_bin == 1)),
+    fit_ckd_yes,
     dat_ckd %>% filter(ckd_bin == 1),
-    horizon = rd_horizon,
+    horizon   = rd_horizon,
     group_var = "group",
-    n_boot = n_boot_rd
+    n_boot    = n_boot_rd,
+    n_cores   = n_boot_cores,
+    seed      = 1007L
   ) %>% mutate(Subgroup = "CKD yes")
   
   rd_all <- bind_rows(
     rd_overall, rd_female, rd_male, rd_lt75, rd_ge75, rd_ckd_no, rd_ckd_yes
   )
   
-  # nonAKD row を追加
-  rd_ref <- tibble(
-    Subgroup = c("Overall","Female","Male","<75",">=75","CKD no","CKD yes"),
-    Group = "nonAKD",
-    RD = NA_real_,
-    RD_low = NA_real_,
-    RD_high = NA_real_
-  )
-  
-  rd_all <- bind_rows(rd_ref, rd_all)
-  
+  # nonAKD rows are now included in each gcomp_rd() output
+
   # ==========================
   # 8) Merge
   # ==========================
-  build_block <- function(stats_df, risk5_df, hr_df, rd_df){
+  build_block <- function(stats_df, hr_df, rd_df){
     stats_df %>%
-      left_join(risk5_df, by = c("Subgroup","Group")) %>%
-      left_join(hr_df,    by = c("Subgroup","Group")) %>%
-      left_join(rd_df,    by = c("Subgroup","Group"))
+      left_join(hr_df, by = c("Subgroup","Group")) %>%
+      left_join(rd_df, by = c("Subgroup","Group"))
   }
-  
+
   forest_full <- bind_rows(
-    build_block(stats_overall, risk5_overall, hr_overall, filter(rd_all, Subgroup == "Overall")),
-    build_block(stats_sex,     risk5_sex,     hr_sex,     filter(rd_all, Subgroup %in% c("Female","Male"))),
-    build_block(stats_age,     risk5_age,     hr_age,     filter(rd_all, Subgroup %in% c("<75",">=75"))),
-    build_block(stats_ckd,     risk5_ckd,     hr_ckd,     filter(rd_all, Subgroup %in% c("CKD no","CKD yes")))
+    build_block(stats_overall, hr_overall, filter(rd_all, Subgroup == "Overall")),
+    build_block(stats_sex,     hr_sex,     filter(rd_all, Subgroup %in% c("Female","Male"))),
+    build_block(stats_age,     hr_age,     filter(rd_all, Subgroup %in% c("<75",">=75"))),
+    build_block(stats_ckd,     hr_ckd,     filter(rd_all, Subgroup %in% c("CKD no","CKD yes")))
   ) %>%
     mutate(
       Subgroup = factor(Subgroup,
@@ -647,9 +678,16 @@
         ),
         Number_chr = as.character(Number),
         Deaths_chr = paste0(Deaths, " (", Death_pct, ")"),
-        Risk_chr   = sprintf("%.1f", 100 * risk5),
+        Adj_risk_chr = case_when(
+          is.na(adj_risk) ~ "",
+          is.na(adj_risk_low) ~ sprintf("%.1f", 100 * adj_risk),
+          TRUE ~ sprintf("%.1f (%.1f, %.1f)",
+                         100 * adj_risk,
+                         100 * adj_risk_low,
+                         100 * adj_risk_high)
+        ),
         RD_chr = case_when(
-          Group == "nonAKD" ~ "",
+          Group == "nonAKD" ~ "Reference",
           is.na(RD) ~ "",
           TRUE ~ sprintf("%+.1f (%+.1f, %+.1f)",
                          RD * 100,
@@ -677,7 +715,7 @@
         Group = Group_disp,
         Number = Number_chr,
         `Deaths (%)` = Deaths_chr,
-        `Risk (5y, %)` = Risk_chr,
+        `Adjusted risk (5y, %)` = Adj_risk_chr,
         `Adjusted RD (5y, pp)` = RD_chr,
         ` ` = blank_ci,
         `HR (95%CI)` = HR_chr,
@@ -720,17 +758,32 @@
   }
   
   # ==========================
-  # 11) Draw and save
+  # 11) Save bootstrap results
+  # ==========================
+  out_rds <- file.path(outdir, "Figure4_gcomp_results.rds")
+  saveRDS(
+    list(rd_all = rd_all, forest_full = forest_full, n_boot = n_boot_rd),
+    file = out_rds
+  )
+  cat("Bootstrap results saved:", normalizePath(out_rds), "\n")
+
+  # To reload without re-running bootstrap:
+  #   res <- readRDS(out_rds)
+  #   rd_all      <- res$rd_all
+  #   forest_full <- res$forest_full
+
+  # ==========================
+  # 12) Draw and save
   # ==========================
   disp4 <- make_display_df(forest_full)
   fp4 <- build_forest_plot(disp4$full, disp4$plot)
-  
+
   grid.newpage()
   grid.draw(fp4)
-  
+
   save_pdf_onepage_safe(fp4, out_pdf_4, family = base_family)
   save_tiff_onepage_safe(fp4, out_tiff_4, family = base_family)
-  
+
   cat("\nSaved:\n", out_pdf_4, "\n", out_tiff_4, "\n")
 }
 #adjusted cox:軽量版(bootstrap部分削除　点推定値のみ)####
@@ -768,8 +821,8 @@
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -781,8 +834,8 @@
   # Font
   # ==========================
   base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
+    f  <- c("Hiragino Sans", "Hiragino Kaku Gothic Pro", "Arial Unicode MS", "Arial")
+    ok <- f[f %in% systemfonts::system_fonts()$family]
     if (length(ok) == 0) "sans" else ok[1]
   }
   
@@ -1605,8 +1658,8 @@
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -1618,8 +1671,8 @@
   # Font
   # ==========================
   base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
+    f  <- c("Hiragino Sans", "Hiragino Kaku Gothic Pro", "Arial Unicode MS", "Arial")
+    ok <- f[f %in% systemfonts::system_fonts()$family]
     if (length(ok) == 0) "sans" else ok[1]
   }
   
@@ -2484,8 +2537,8 @@
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "word_supp_tables")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -2496,8 +2549,8 @@
   # Font
   # ==========================
   base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
+    f  <- c("Hiragino Sans", "Hiragino Kaku Gothic Pro", "Arial Unicode MS", "Arial")
+    ok <- f[f %in% systemfonts::system_fonts()$family]
     if (length(ok) == 0) "sans" else ok[1]
   }
   
@@ -2753,8 +2806,8 @@
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -2767,8 +2820,8 @@
   # Font
   # ==========================
   base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
+    f  <- c("Hiragino Sans", "Hiragino Kaku Gothic Pro", "Arial Unicode MS", "Arial")
+    ok <- f[f %in% systemfonts::system_fonts()$family]
     if (length(ok) == 0) "sans" else ok[1]
   }
   
@@ -3140,8 +3193,8 @@
   # ==========================
   # Paths
   # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
+  setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -3153,8 +3206,8 @@
   # Font
   # ==========================
   base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
+    f  <- c("Hiragino Sans", "Hiragino Kaku Gothic Pro", "Arial Unicode MS", "Arial")
+    ok <- f[f %in% systemfonts::system_fonts()$family]
     if (length(ok) == 0) "sans" else ok[1]
   }
   

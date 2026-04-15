@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript -e \"tryCatch\\(packageVersion\\('survival'\\), error=function\\(e\\) 'not installed'\\); tryCatch\\(packageVersion\\('survminer'\\), error=function\\(e\\) 'not installed'\\)\")",
+      "Bash(Rscript -e ':*)",
+      "Read(//tmp/stdReg2/**)",
+      "Read(//tmp/stdReg2/R/**)"
+    ]
+  }
+}
