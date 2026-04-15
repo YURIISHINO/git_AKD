@@ -2724,394 +2724,7 @@
   
   cat("\nSaved files:\n", out_pdf, "\n", out_tiff, "\n")
 }
-#若年と高齢で二つのグラフ####
-{
-  ############################################################
-  # Figure 5: Continuous age × AKD interaction
-  #  - Main figure: age 40-85 years
-  #  - Supplementary figure: full age range
-  #  - Grouping: 150_210recovery priority, then 90_150recovery
-  ############################################################
-  
-  graphics.off()
-  
-  # ==========================
-  # Packages
-  # ==========================
-  pkgs <- c("readr", "dplyr", "survival", "ggplot2", "tibble", "ragg")
-  to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
-  
-  library(readr)
-  library(dplyr)
-  library(survival)
-  library(ggplot2)
-  library(tibble)
-  library(ragg)
-  library(grid)
-  
-  # ==========================
-  # Paths
-  # ==========================
-  setwd("X:/R")
-  in_csv <- "jin1_Eligibile.csv"
-  outdir <- file.path(getwd(), "figure_table")
-  dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-  
-  out_pdf_main  <- file.path(outdir, "Figure5_main_40to85.pdf")
-  out_tiff_main <- file.path(outdir, "Figure5_main_40to85.tif")
-  out_pdf_full  <- file.path(outdir, "Supplementary_Figure5_fullrange.pdf")
-  out_tiff_full <- file.path(outdir, "Supplementary_Figure5_fullrange.tif")
-  
-  # ==========================
-  # Font
-  # ==========================
-  base_family <- {
-    f <- c("Yu Gothic", "MS Gothic", "Meiryo", "Arial Unicode MS", "Arial")
-    ok <- f[f %in% names(grDevices::windowsFonts())]
-    if (length(ok) == 0) "sans" else ok[1]
-  }
-  
-  # ==========================
-  # 1) Load
-  # ==========================
-  loc <- locale(encoding = "SHIFT-JIS")
-  jin1_Eligibile <- read_csv(in_csv, locale = loc)
-  
-  # ==========================
-  # 2) Build analysis dataset
-  # ==========================
-  dat <- jin1_Eligibile %>%
-    group_by(id) %>%
-    arrange(index_date, date, .by_group = TRUE) %>%
-    slice(1) %>%
-    ungroup() %>%
-    filter(
-      exclude == "include",
-      jin_status %in% c("AKD", "nonAKD")
-    ) %>%
-    mutate(
-      group = case_when(
-        jin_status == "nonAKD" ~ "non-AKD",
-        jin_status == "AKD" & `150_210recovery` == 1 ~ "AKD with recovery",
-        jin_status == "AKD" & `150_210recovery` == 2 ~ "AKD without recovery",
-        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "AKD with recovery",
-        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "AKD without recovery",
-        TRUE ~ NA_character_
-      ),
-      group = factor(
-        group,
-        levels = c("non-AKD", "AKD with recovery", "AKD without recovery")
-      ),
-      arb_acei_use = if_else(coalesce(arb, 0) == 1 | coalesce(acei, 0) == 1, 1L, 0L),
-      time_years = as.numeric(last_follow_death - index_plus_210) / 365.25
-    ) %>%
-    filter(
-      !is.na(group),
-      !is.na(age),
-      !is.na(index_cre),
-      !is.na(time_years), time_years >= 0,
-      !is.na(primary_death)
-    )
-  
-  # 確認
-  cat("\nGroup counts:\n")
-  print(table(dat$group, useNA = "ifany"))
-  
-  # ==========================
-  # 3) Center age
-  # ==========================
-  age_mean <- mean(dat$age, na.rm = TRUE)
-  dat <- dat %>%
-    mutate(age_c = age - age_mean)
-  
-  # ==========================
-  # 4) Cox model with age interaction
-  # Reference = non-AKD
-  # ==========================
-  cox_model <- coxph(
-    Surv(time_years, primary_death) ~
-      group * age_c +
-      index_cre + arb_acei_use +
-      dn1 + dn3 + dn4 + dn5 + dn6 + dn7 +
-      dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15,
-    data = dat
-  )
-  
-  cf <- coef(cox_model)
-  vc <- vcov(cox_model)
-  
-  cat("\nCoefficient names:\n")
-  print(names(cf))
-  
-  # ==========================
-  # 5) Function to compute HR(age) vs non-AKD
-  # ==========================
-  get_hr_curve <- function(group_label, ages, age_mean, cf, vc) {
-    
-    coef_main <- paste0("group", group_label)
-    coef_int  <- paste0("group", group_label, ":age_c")
-    
-    beta_main <- unname(cf[coef_main])
-    beta_int  <- unname(cf[coef_int])
-    
-    var_main <- vc[coef_main, coef_main]
-    var_int  <- vc[coef_int,  coef_int]
-    cov_mi   <- vc[coef_main, coef_int]
-    
-    age_c_vals <- ages - age_mean
-    log_hr <- beta_main + beta_int * age_c_vals
-    se_log_hr <- sqrt(pmax(0, var_main + (age_c_vals^2) * var_int + 2 * age_c_vals * cov_mi))
-    
-    tibble(
-      age   = ages,
-      HR    = exp(log_hr),
-      lower = exp(log_hr - 1.96 * se_log_hr),
-      upper = exp(log_hr + 1.96 * se_log_hr),
-      Group = dplyr::case_when(
-        group_label == "AKD with recovery"    ~ "AKD with recovery",
-        group_label == "AKD without recovery" ~ "AKD without recovery"
-      )
-    )
-  }
-  
-  # ==========================
-  # 6) Create curves
-  # full range: use observed 1st-99th percentile
-  # main figure: 40-85 years
-  # ==========================
-  age_min_full <- floor(quantile(dat$age, 0.01, na.rm = TRUE))
-  age_max_full <- ceiling(quantile(dat$age, 0.99, na.rm = TRUE))
-  
-  age_seq_full <- seq(age_min_full, age_max_full, by = 1)
-  age_seq_main <- seq(40, 85, by = 1)
-  
-  curve_full <- bind_rows(
-    get_hr_curve("AKD with recovery", age_seq_full, age_mean, cf, vc),
-    get_hr_curve("AKD without recovery", age_seq_full, age_mean, cf, vc)
-  )
-  
-  curve_main <- bind_rows(
-    get_hr_curve("AKD with recovery", age_seq_main, age_mean, cf, vc),
-    get_hr_curve("AKD without recovery", age_seq_main, age_mean, cf, vc)
-  )
-  
-  # ==========================
-  # 7) Truncation settings
-  # ==========================
-  # Main figure: emphasize convergence near HR = 1
-  ymin_main <- 0.5
-  ymax_main <- 3.0
-  
-  # Full supplementary figure: allow wider range
-  ymin_full <- max(0.3, min(curve_full$lower, 1, na.rm = TRUE) * 0.95)
-  ymax_full <- max(curve_full$upper, 1, na.rm = TRUE) * 1.05
-  
-  prepare_plot <- function(dat, ymin, ymax) {
-    dat %>%
-      mutate(
-        lower_plot = pmax(lower, ymin),
-        upper_plot = pmin(upper, ymax),
-        lo_trunc   = lower < ymin,
-        hi_trunc   = upper > ymax
-      )
-  }
-  
-  plot_main <- prepare_plot(curve_main, ymin_main, ymax_main)
-  plot_full <- prepare_plot(curve_full, ymin_full, ymax_full)
-  
-  # ==========================
-  # 8) Arrow data (safe version)
-  # ==========================
-  arrow_main_upper <- plot_main %>%
-    filter(hi_trunc) %>%
-    group_by(Group) %>%
-    filter((row_number() - 1) %% 4 == 0) %>%
-    ungroup()
-  
-  arrow_main_lower <- plot_main %>%
-    filter(lo_trunc) %>%
-    group_by(Group) %>%
-    filter((row_number() - 1) %% 4 == 0) %>%
-    ungroup()
-  
-  arrow_full_upper <- plot_full %>%
-    filter(hi_trunc) %>%
-    group_by(Group) %>%
-    filter((row_number() - 1) %% 4 == 0) %>%
-    ungroup()
-  
-  arrow_full_lower <- plot_full %>%
-    filter(lo_trunc) %>%
-    group_by(Group) %>%
-    filter((row_number() - 1) %% 4 == 0) %>%
-    ungroup()
-  
-  # ==========================
-  # 9) Plot function
-  # ==========================
-  make_plot <- function(dat, arrow_up, arrow_low, ymin, ymax, xlim = NULL, main_plot = FALSE) {
-    
-    p <- ggplot(dat, aes(x = age, y = HR, color = Group, fill = Group)) +
-      geom_ribbon(
-        aes(ymin = lower_plot, ymax = upper_plot),
-        alpha = if (main_plot) 0.10 else 0.15,
-        color = NA,
-        show.legend = FALSE
-      ) +
-      geom_line(aes(linetype = Group), linewidth = 1.15) +
-      geom_hline(yintercept = 1, linetype = "dotted", linewidth = 0.7) +
-      scale_color_manual(
-        values = c(
-          "AKD with recovery"    = "#2ECC71",
-          "AKD without recovery" = "#E74C3C"
-        )
-      ) +
-      scale_fill_manual(
-        values = c(
-          "AKD with recovery"    = "#2ECC71",
-          "AKD without recovery" = "#E74C3C"
-        )
-      ) +
-      scale_linetype_manual(
-        values = c(
-          "AKD with recovery"    = "solid",
-          "AKD without recovery" = "dashed"
-        )
-      ) +
-      labs(
-        x = "Age (years)",
-        y = "Hazard ratio vs non-AKD",
-        color = "AKD group",
-        linetype = "AKD group"
-      ) +
-      theme_classic(base_family = base_family, base_size = 12) +
-      theme(
-        legend.position = "top",
-        legend.title = element_text(face = "bold"),
-        axis.title = element_text(face = "bold")
-      )
-    
-    if (main_plot) {
-      p <- p +
-        geom_segment(
-          data = arrow_up,
-          aes(x = age, xend = age, y = ymax - 0.10, yend = ymax),
-          inherit.aes = FALSE,
-          color = "black",
-          linewidth = 0.35,
-          arrow = arrow(length = unit(0.10, "inches"), type = "closed")
-        ) +
-        geom_segment(
-          data = arrow_low,
-          aes(x = age, xend = age, y = ymin + 0.10, yend = ymin),
-          inherit.aes = FALSE,
-          color = "black",
-          linewidth = 0.35,
-          arrow = arrow(length = unit(0.10, "inches"), type = "closed")
-        ) +
-        coord_cartesian(
-          xlim = xlim,
-          ylim = c(ymin, ymax),
-          expand = FALSE
-        ) +
-        scale_x_continuous(breaks = seq(xlim[1], xlim[2], by = 5)) +
-        scale_y_continuous(breaks = c(0.5, 1.0, 1.5, 2.0, 2.5, 3.0))
-    } else {
-      p <- p +
-        geom_segment(
-          data = arrow_up,
-          aes(x = age, xend = age, y = ymax * 0.96, yend = ymax),
-          inherit.aes = FALSE,
-          color = "black",
-          linewidth = 0.35,
-          arrow = arrow(length = unit(0.10, "inches"), type = "closed")
-        ) +
-        geom_segment(
-          data = arrow_low,
-          aes(x = age, xend = age, y = ymin * 1.04, yend = ymin),
-          inherit.aes = FALSE,
-          color = "black",
-          linewidth = 0.35,
-          arrow = arrow(length = unit(0.10, "inches"), type = "closed")
-        ) +
-        coord_cartesian(
-          ylim = c(ymin, ymax),
-          expand = TRUE
-        )
-    }
-    
-    p
-  }
-  
-  # ==========================
-  # 10) Create plots
-  # ==========================
-  p_main <- make_plot(
-    dat = plot_main,
-    arrow_up = arrow_main_upper,
-    arrow_low = arrow_main_lower,
-    ymin = ymin_main,
-    ymax = ymax_main,
-    xlim = c(40, 85),
-    main_plot = TRUE
-  )
-  
-  p_full <- make_plot(
-    dat = plot_full,
-    arrow_up = arrow_full_upper,
-    arrow_low = arrow_full_lower,
-    ymin = ymin_full,
-    ymax = ymax_full,
-    main_plot = FALSE
-  )
-  
-  # ==========================
-  # 11) Print check
-  # ==========================
-  print(p_main)
-  print(p_full)
-  
-  # ==========================
-  # 12) Save files
-  # ==========================
-  pdf(out_pdf_main, width = 180/25.4, height = 120/25.4, family = base_family)
-  print(p_main)
-  dev.off()
-  
-  ragg::agg_tiff(
-    out_tiff_main,
-    width = 180/25.4,
-    height = 120/25.4,
-    units = "in",
-    res = 600,
-    compression = "lzw"
-  )
-  print(p_main)
-  dev.off()
-  
-  pdf(out_pdf_full, width = 180/25.4, height = 120/25.4, family = base_family)
-  print(p_full)
-  dev.off()
-  
-  ragg::agg_tiff(
-    out_tiff_full,
-    width = 180/25.4,
-    height = 120/25.4,
-    units = "in",
-    res = 600,
-    compression = "lzw"
-  )
-  print(p_full)
-  dev.off()
-  
-  cat("\nSaved files:\n")
-  cat(" Main PDF : ", out_pdf_main, "\n")
-  cat(" Main TIFF: ", out_tiff_main, "\n")
-  cat(" Full PDF : ", out_pdf_full, "\n")
-  cat(" Full TIFF: ", out_tiff_full, "\n")
-}
-#年齢ごとのフォレストプロットのみ####
+#年齢ごとのフォレストプロットのみ
 {
   ############################################################
   # Supplementary Figure 5
@@ -3142,7 +2755,7 @@
   # ==========================
   setwd("X:/R")
   in_csv <- "jin1_Eligibile.csv"
-  outdir <- file.path(getwd(), "figure_table")
+  outdir <- file.path(getwd(), "word_supp_tables")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
   out_pdf  <- file.path(outdir, "Supplementary_Figure5_Forest_AgeBands.pdf")
@@ -3231,8 +2844,6 @@
   # ==========================
   # 5) Age-band display labels and representative ages
   # ==========================
-  # <40 は実データ内の <40 歳の中央値を使う
-  # ≥80 は実データ内の >=80 歳の中央値を使う
   rep_age_lt40 <- dat %>%
     filter(age < 40) %>%
     summarise(rep_age = median(age, na.rm = TRUE)) %>%
@@ -3243,12 +2854,12 @@
     summarise(rep_age = median(age, na.rm = TRUE)) %>%
     pull(rep_age)
   
-  # データがない場合の保険
   if (length(rep_age_lt40) == 0 || is.na(rep_age_lt40)) rep_age_lt40 <- 35
   if (length(rep_age_ge80) == 0 || is.na(rep_age_ge80)) rep_age_ge80 <- 82
   
   age_band_df <- tibble(
-    band_label = c("<40", "40-49", "50-59", "60-69", "70-79", "≥80"),
+    band_id    = c("lt40", "40_49", "50_59", "60_69", "70_79", "ge80"),
+    band_label = c("<40", "40-49", "50-59", "60-69", "70-79", ">=80"),
     rep_age    = c(rep_age_lt40, 45, 55, 65, 75, rep_age_ge80)
   )
   
@@ -3293,19 +2904,19 @@
         calc_hr_at_age("AKD without recovery", age_band_df$rep_age[i], age_mean, cf, vc)
       ) %>%
         mutate(
-          age_band = age_band_df$band_label[i]
+          age_band_id    = age_band_df$band_id[i],
+          age_band_label = age_band_df$band_label[i]
         )
     })
   ) %>%
     mutate(
-      age_band = factor(age_band, levels = rev(age_band_df$band_label)),
+      age_band_id = factor(age_band_id, levels = rev(age_band_df$band_id)),
       Group = factor(
         Group,
         levels = c("AKD with recovery", "AKD without recovery")
       ),
       label_ci = sprintf("%.2f (%.2f-%.2f)", HR, lower, upper)
     )
-  
   print(plot_df)
   
   # ==========================
@@ -3319,8 +2930,8 @@
   plot_df <- plot_df %>%
     mutate(
       y = case_when(
-        Group == "AKD with recovery"    ~ as.numeric(age_band) + 0.16,
-        Group == "AKD without recovery" ~ as.numeric(age_band) - 0.16
+        Group == "AKD with recovery"    ~ as.numeric(age_band_id) + 0.16,
+        Group == "AKD without recovery" ~ as.numeric(age_band_id) - 0.16
       )
     )
   
@@ -3361,10 +2972,10 @@
       labels = c("0.5", "1", "2", "4")
     ) +
     scale_y_continuous(
-      breaks = seq_along(levels(plot_df$age_band)),
-      labels = levels(plot_df$age_band),
+      breaks = seq_along(levels(plot_df$age_band_id)),
+      labels = rev(age_band_df$band_label),
       expand = expansion(mult = c(0.08, 0.08))
-    ) +
+    )+
     labs(
       x = "Hazard ratio vs non-AKD",
       y = "Age group (years)",
