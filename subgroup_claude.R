@@ -36,7 +36,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
@@ -822,7 +822,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -1659,7 +1659,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -2538,7 +2538,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "word_supp_tables")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -2807,7 +2807,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
@@ -3194,7 +3194,7 @@
   # Paths
   # ==========================
   setwd("/Users/tfuji/Dropbox/臨床研究/石野先生/git_AKD-git")
-  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_25.12.18/jin1_Eligible.csv"
+  in_csv <- "/Users/tfuji/Dropbox/臨床研究/石野先生/石野先生_practice/rstudio-export_26.4.16/jin1_Eligible.csv"
   outdir <- file.path(getwd(), "figure_table")
   dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
   
