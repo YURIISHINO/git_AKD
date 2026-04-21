@@ -1145,6 +1145,47 @@ ggsave(
 # ---- end ----
 }#3年以内と全期間
 {
+  # =========================================================
+  # 4) Figure 3B only：poster-friendly version
+  # =========================================================
+  outdir <- "X:/R/eGFRslope"
+  dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
+  fig3b_only <- p_fig4 +
+    labs(
+      tag   = "B",
+      title = "Adjusted differences in annual eGFR decline",
+      y     = "Mean change in eGFR\n(mL/min/1.73 m² per year)"
+    ) +
+    scale_x_discrete(expand = expansion(add = 0.8)) +
+    theme(
+      text = element_text(family = base_family),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0, family = base_family),
+      plot.tag = element_text(face = "bold", size = 14, family = base_family),
+      plot.tag.position = c(0, 1.00),
+      legend.position = "bottom",
+      plot.margin = margin(t = 8, r = 20, b = 8, l = 20)
+    )
+  
+  print(fig3b_only)
+  
+  ggsave(
+    filename = file.path(outdir, "Figure3B_only_slope_difference_1y_poster.pdf"),
+    plot  = fig3b_only,
+    width = 180, height = 120, units = "mm",
+    device = cairo_pdf
+  )
+  
+  ggsave(
+    filename = file.path(outdir, "Figure3B_only_slope_difference_1y_poster.tiff"),
+    plot  = fig3b_only,
+    width = 180, height = 120, units = "mm",
+    device = ragg::agg_tiff,
+    dpi = 600,
+    compression = "lzw"
+  )
+}#ポスター用
+R.version
+{
 ############################################################
 # Sensitivity Figure 5 (≤1y): 2 versions
 #  Ver-A) 5A: Observed eGFR trajectory (window-aligned) + 5B: slope bar
@@ -1901,5 +1942,1033 @@ ggsave(
 }#3年以内と全期間の折れ線グラフ
 
 
+#time0をindex_date+210に合わせる
+{
+  ############################################################
+  # Observed delta eGFR trajectory + annual slope
+  # Landmark-aligned version
+  # time0 = index_date + 210 days
+  # Top: A Observed delta eGFR trajectory (≤1 year)
+  # Bottom: B Adjusted annual eGFR slope bar plot (≤1 year)
+  # Save to: X:/R/eGFRslope
+  ############################################################
+  
+  graphics.off()
+  
+  # =========================
+  # Packages
+  # =========================
+  pkgs <- c(
+    "readr","dplyr","tidyr","stringr","purrr",
+    "nlme","multcomp","ggplot2","data.table",
+    "grid","gridExtra","gtable","ragg"
+  )
+  to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
+  
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(purrr)
+  library(nlme)
+  library(multcomp)
+  library(ggplot2)
+  library(data.table)
+  library(grid)
+  library(gridExtra)
+  library(gtable)
+  library(ragg)
+  
+  # =========================
+  # 0) Read data
+  # =========================
+  setwd("X:/R")
+  jin1_Eligibile <- read_csv("jin1_Eligibile.csv", locale = locale(encoding = "SHIFT-JIS"))
+  
+  # =========================
+  # 1) Build inclusion data
+  #    time0 fixed at index_date + 210
+  # =========================
+  jin1_inclusion <- jin1_Eligibile %>%
+    filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+    mutate(
+      jin_label = case_when(
+        jin_status == "nonAKD" ~ "nonAKD",
+        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      ),
+      jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
+      index_plus_210 = index_date + 210
+    ) %>%
+    filter(!is.na(jin_label))
+  
+  # baseline eGFR nearest to day 210 within 150-210 days
+  time0_egfr_df <- jin1_inclusion %>%
+    mutate(
+      days_from_index = as.numeric(date - index_date),
+      dist_to_210 = abs(days_from_index - 210)
+    ) %>%
+    filter(days_from_index >= 150, days_from_index <= 210) %>%
+    group_by(id) %>%
+    arrange(dist_to_210, desc(date), .by_group = TRUE) %>%
+    slice(1) %>%
+    ungroup() %>%
+    transmute(
+      id,
+      time0_egfr = egfr,
+      time0_egfr_date = date
+    )
+  
+  jin1_inclusion <- jin1_inclusion %>%
+    mutate(
+      time0 = index_plus_210,
+      years_from_time0 = as.numeric(date - time0) / 365.25
+    ) %>%
+    left_join(time0_egfr_df, by = "id")
+  
+  # =========================
+  # 2) Longitudinal data
+  # =========================
+  akd_time_m <- jin1_inclusion %>%
+    filter(years_from_time0 >= 0)
+  
+  baseline_cov <- jin1_Eligibile %>%
+    filter(exclude == "include") %>%
+    group_by(id) %>%
+    arrange(index_date) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(arb_acei_use = if_else(arb == 1 | acei == 1, 1L, 0L)) %>%
+    dplyr::select(
+      id, age, sex, arb_acei_use,
+      dn1, dn3, dn4, dn5, dn6, dn7, dn8, dn9, dn10, dn12, dn13, dn14, dn15
+    )
+  
+  covars <- c(
+    "age","sex","arb_acei_use",
+    "dn1","dn3","dn4","dn5","dn6","dn7","dn8","dn9","dn10","dn12","dn13","dn14","dn15"
+  )
+  
+  longdat <- akd_time_m %>%
+    dplyr::select(-any_of(covars)) %>%
+    left_join(baseline_cov, by = "id") %>%
+    mutate(
+      age_c        = as.numeric(scale(age, center = TRUE, scale = FALSE)),
+      time0_egfr_c = as.numeric(scale(time0_egfr, center = TRUE, scale = FALSE)),
+      jin_label    = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery"))
+    ) %>%
+    filter(!is.na(time0_egfr))
+  
+  # =========================
+  # 3) Slope-adjusted LME (≤1 year only)
+  # =========================
+  ctrl <- lmeControl(
+    maxIter = 1e8, msMaxIter = 1e8,
+    opt = "optim", optimMethod = "L-BFGS-B"
+  )
+  
+  fit_slope_adj_1y <- lme(
+    egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1 +
+      age_c + sex + arb_acei_use +
+      dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
+      years_from_time0:(age_c + arb_acei_use +
+                          dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15),
+    random = list(id = pdSymm(~ 1 + years_from_time0)),
+    data = longdat %>% filter(years_from_time0 <= 1),
+    na.action = na.omit,
+    method = "REML",
+    control = ctrl
+  )
+  
+  # =========================
+  # 4) Extract annual slopes + contrast
+  # =========================
+  cf <- names(fixef(fit_slope_adj_1y))
+  
+  v_slope <- function(g){
+    vec <- rep(0, length(cf)); names(vec) <- cf
+    if ("years_from_time0" %in% cf) vec["years_from_time0"] <- 1
+    if (g == "Recovery" && "years_from_time0:jin_labelRecovery" %in% cf)
+      vec["years_from_time0:jin_labelRecovery"] <- 1
+    if (g == "Non-Recovery" && "years_from_time0:jin_labelNon-Recovery" %in% cf)
+      vec["years_from_time0:jin_labelNon-Recovery"] <- 1
+    vec
+  }
+  
+  L <- rbind(
+    nonAKD         = v_slope("nonAKD"),
+    Recovery       = v_slope("Recovery"),
+    `Non-Recovery` = v_slope("Non-Recovery")
+  )
+  
+  ci_slope <- suppressMessages(confint(glht(fit_slope_adj_1y, linfct = L)))
+  
+  df_bar <- tibble(
+    group    = rownames(L),
+    estimate = ci_slope$confint[, "Estimate"],
+    lower    = ci_slope$confint[, "lwr"],
+    upper    = ci_slope$confint[, "upr"]
+  ) %>%
+    mutate(group = factor(group, levels = c("nonAKD","Recovery","Non-Recovery")))
+  
+  # contrasts vs nonAKD
+  b  <- v_slope("nonAKD")
+  r  <- v_slope("Recovery")
+  nr <- v_slope("Non-Recovery")
+  
+  K <- rbind(
+    `Recovery − nonAKD`     = r  - b,
+    `Non-Recovery − nonAKD` = nr - b
+  )
+  
+  gl_contrast <- glht(fit_slope_adj_1y, linfct = K)
+  ci_contrast <- suppressMessages(confint(gl_contrast))
+  sm_contrast <- suppressMessages(summary(gl_contrast))
+  
+  df_contrast <- tibble(
+    group      = c("Recovery","Non-Recovery"),
+    diff_value = ci_contrast$confint[, "Estimate"],
+    diff_lower = ci_contrast$confint[, "lwr"],
+    diff_upper = ci_contrast$confint[, "upr"],
+    diff_p     = sm_contrast$test$pvalues
+  )
+  
+  sample_sizes <- longdat %>%
+    filter(years_from_time0 <= 1) %>%
+    distinct(id, jin_label) %>%
+    count(jin_label, name = "n") %>%
+    transmute(group = as.character(jin_label), n)
+  
+  df_bar <- df_bar %>%
+    left_join(sample_sizes, by = "group") %>%
+    left_join(df_contrast, by = "group")
+  
+  # =========================
+  # 5) Observed delta eGFR data
+  # =========================
+  dt <- as.data.table(
+    akd_time_m %>%
+      filter(years_from_time0 >= 0, years_from_time0 <= 1) %>%
+      dplyr::select(id, years_from_time0, egfr, jin_label)
+  )
+  
+  dt <- dt[!is.na(egfr)]
+  
+  median_interval <- dt[order(id, years_from_time0),
+                        .(d = diff(years_from_time0)), by = id]$d %>%
+    median(na.rm = TRUE)
+  
+  window_width <- median_interval * 0.75
+  half_w <- window_width / 2
+  
+  target_timepoints <- seq(0, 1, by = 0.25)
+  ids <- unique(dt$id)
+  grid_dt <- CJ(id = ids, target_time = target_timepoints)
+  
+  setkey(dt, id, years_from_time0)
+  
+  window_data_obs <- dt[
+    grid_dt,
+    on = .(id, years_from_time0 = target_time),
+    roll = "nearest",
+    nomatch = 0L,
+    .(id,
+      target_time = i.target_time,
+      years_from_time0,
+      egfr,
+      jin_label)
+  ]
+  
+  window_data_obs <- window_data_obs[abs(years_from_time0 - target_time) <= half_w]
+  
+  base_dt <- window_data_obs[target_time == 0, .(baseline_egfr = egfr[1]), by = id]
+  
+  wd2 <- merge(window_data_obs, base_dt, by = "id", all.x = FALSE, all.y = FALSE)
+  wd2[, delta_egfr := egfr - baseline_egfr]
+  
+  plot_dat <- as_tibble(wd2) %>%
+    group_by(jin_label, target_time) %>%
+    summarise(
+      mean_delta = mean(delta_egfr, na.rm = TRUE),
+      sd         = sd(delta_egfr, na.rm = TRUE),
+      n          = sum(!is.na(delta_egfr)),
+      se         = sd / sqrt(n),
+      lwr        = mean_delta - 1.96 * se,
+      upr        = mean_delta + 1.96 * se,
+      .groups    = "drop"
+    ) %>%
+    mutate(
+      jin_label = factor(as.character(jin_label),
+                         levels = c("nonAKD","Recovery","Non-Recovery"))
+    )
+  
+  # =========================
+  # 6) Colors / labels
+  # =========================
+  values_group <- c(
+    nonAKD         = "#95A5A6",
+    Recovery       = "#2ECC71",
+    `Non-Recovery` = "#E74C3C"
+  )
+  
+  labels_group <- c(
+    nonAKD         = "non-AKD",
+    Recovery       = "AKD with recovery",
+    `Non-Recovery` = "AKD without recovery"
+  )
+  
+  # =========================
+  # 7) Panel A axis range
+  #    make sure all CI/lines fit inside panel
+  # =========================
+  top_ymin <- floor(min(plot_dat$lwr, na.rm = TRUE) - 0.5)
+  top_ymax <- ceiling(max(plot_dat$upr, na.rm = TRUE) + 0.5)
+  
+  # keep a sensible upper bound near reference style
+  top_ymax <- max(top_ymax, 0)
+  top_ymin <- min(top_ymin, -10)
+  
+  # =========================
+  # 8) Panel A
+  # =========================
+  p_top <- ggplot(
+    plot_dat,
+    aes(x = target_time, y = mean_delta, color = jin_label, group = jin_label)
+  ) +
+    #geom_hline(yintercept = 0, linewidth = 0.5, color = "black") +
+    geom_line(linewidth = 1.0) +
+    geom_point(size = 2.4) +
+    geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.03, linewidth = 0.8) +
+    scale_color_manual(values = values_group, labels = labels_group, name = "Group") +
+    scale_x_continuous(
+      breaks = seq(0, 1, by = 0.25),
+      limits = c(0, 1),
+      labels = sprintf("%.2f", seq(0, 1, by = 0.25)),
+      expand = expansion(mult = c(0.02, 0.02))
+    ) +
+    scale_y_continuous(
+      limits = c(top_ymin, top_ymax),
+      expand = expansion(mult = c(0.03, 0.05))
+    ) +
+    labs(
+      title = "A  Observed change in eGFR from landmark",
+      x = "Time from landmark (year)",
+      y = expression(paste(Delta, "eGFR(mL/min/1.73 m"^2, ")"))
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background  = element_rect(fill = "white", color = NA),
+      panel.grid.major = element_line(color = "#D9D9D9", linewidth = 0.4),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+      axis.title = element_text(size = 12, color = "black"),
+      axis.text  = element_text(size = 10, color = "black"),
+      plot.title = element_text(size = 13, face = "bold", hjust = 0),
+      legend.position = "right",
+      legend.title = element_text(size = 11, face = "bold"),
+      legend.text  = element_text(size = 10),
+      legend.key   = element_rect(fill = "white", color = NA),
+      plot.margin  = margin(t = 4, r = 4, b = 2, l = 4)
+    )
+  
+  # =========================
+  # 9) Panel B positions/range
+  #    keep CI and text inside panel
+  # =========================
+  df_bar <- df_bar %>%
+    mutate(
+      x = c(1, 2, 3),
+      diff_label = case_when(
+        group == "nonAKD" ~ "Reference",
+        TRUE ~ sprintf("Diff: %.2f\n(%.2f, %.2f)", diff_value, diff_lower, diff_upper)
+      ),
+      p_label = case_when(
+        group == "nonAKD" ~ "",
+        diff_p < 0.001 ~ "p<0.001",
+        diff_p < 0.01  ~ sprintf("p=%.3f", diff_p),
+        TRUE           ~ sprintf("p=%.2f", diff_p)
+      )
+    )
+  
+  bar_ymin <- floor(min(df_bar$lower, na.rm = TRUE) - 4.5)
+  bar_ymax <- max(1.6, ceiling(max(df_bar$upper, na.rm = TRUE) + 0.8))
+  
+  n_y    <- 0.55
+  diff_y <- bar_ymin + 1.9
+  p_y    <- bar_ymin + 0.5
+  
+  # =========================
+  # 10) Panel B
+  # =========================
+  p_bottom <- ggplot(df_bar, aes(x = x, y = estimate, fill = group)) +
+    #geom_hline(yintercept = 0, linewidth = 0.5, color = "black") +
+    geom_col(width = 0.62, color = NA) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.16, linewidth = 0.8) +
+    geom_text(aes(y = n_y, label = paste0("n=", n)),
+              size = 3.8, fontface = "bold", color = "#333333") +
+    geom_text(aes(y = diff_y, label = diff_label),
+              size = 3.2, fontface = "italic", color = "#4D4D4D", lineheight = 0.95) +
+    geom_text(aes(y = p_y, label = p_label),
+              size = 3.4, fontface = "bold", color = "#333333") +
+    scale_fill_manual(
+      values = c(
+        nonAKD = "#95A5A6",
+        Recovery = "#2ECC71",
+        `Non-Recovery` = "#E74C3C"
+      ),
+      breaks = c("nonAKD", "Recovery", "Non-Recovery"),
+      labels = c(
+        nonAKD = "Non AKD",
+        Recovery = "AKD with recovery",
+        `Non-Recovery` = "AKD without recovery"
+      ),
+      name = "Group"
+    ) +
+    scale_x_continuous(
+      breaks = NULL,
+      limits = c(0.4, 3.6),
+      expand = expansion(mult = c(0.02, 0.02))
+    ) +
+    scale_y_continuous(
+      limits = c(bar_ymin, bar_ymax),
+      expand = expansion(mult = c(0.03, 0.03))
+    ) +
+    labs(
+      title = "B  Adjusted differences in annual eGFR change",
+      x = NULL,
+      y = "Mean change in eGFR\n(mL/min/1.73 m² per year)"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background  = element_rect(fill = "white", color = NA),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+      axis.title = element_text(size = 12, color = "black"),
+      axis.text.y = element_text(size = 10, color = "black"),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.title = element_text(size = 13, face = "bold", hjust = 0),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 11, face = "bold"),
+      legend.text  = element_text(size = 10),
+      legend.key.size = unit(0.9, "lines"),
+      legend.key   = element_rect(fill = "white", color = NA),
+      plot.margin  = margin(t = 2, r = 4, b = 2, l = 4)
+    ) +
+    guides(fill = guide_legend(nrow = 1, byrow = TRUE))
+  
+  # =========================
+  # 11) Combine
+  # =========================
+  fig_combined <- arrangeGrob(
+    p_top,
+    p_bottom,
+    ncol = 1,
+    heights = c(0.9, 1.1)
+  )
+  
+  grid.newpage()
+  grid.draw(fig_combined)
+  
+  # =========================
+  # 12) Save
+  # =========================
+  outdir <- "X:/R/eGFRslope"
+  if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+  
+  ragg::agg_tiff(
+    filename = file.path(outdir, "observed_delta_and_slope_1y_landmark210_v2.tiff"),
+    width = 180, height = 190, units = "mm", res = 600, compression = "lzw"
+  )
+  grid.newpage()
+  grid.draw(fig_combined)
+  dev.off()
+  
+  ggsave(
+    filename = file.path(outdir, "observed_delta_and_slope_1y_landmark210_v2.pdf"),
+    plot = fig_combined,
+    width = 180, height = 190, units = "mm",
+    device = cairo_pdf
+  )
+}
 
 
+{
+  ############################################################
+  # Observed delta eGFR trajectory + annual slope
+  # Landmark-aligned version
+  # time0 = index_date + 210 days
+  # Layout: Supplement Figure 4 style
+  #   Top    : A Observed change in eGFR from landmark
+  #   Bottom : B Adjusted differences in annual eGFR change
+  #   Columns: ≤3 years / All period
+  # Save to: X:/R/eGFRslope
+  ############################################################
+  
+  graphics.off()
+  
+  # =========================
+  # Packages
+  # =========================
+  pkgs <- c(
+    "readr","dplyr","tidyr","stringr","purrr",
+    "nlme","multcomp","ggplot2","data.table",
+    "grid","gridExtra","gtable","ragg",
+    "patchwork","forcats"
+  )
+  to_install <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(to_install) > 0) install.packages(to_install, dependencies = TRUE)
+  
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(purrr)
+  library(nlme)
+  library(multcomp)
+  library(ggplot2)
+  library(data.table)
+  library(grid)
+  library(gridExtra)
+  library(gtable)
+  library(ragg)
+  library(patchwork)
+  library(forcats)
+  
+  # =========================
+  # 0) Read data
+  # =========================
+  setwd("X:/R")
+  jin1_Eligibile <- read_csv(
+    "jin1_Eligibile.csv",
+    locale = locale(encoding = "SHIFT-JIS")
+  )
+  
+  # =========================
+  # 1) Build inclusion data
+  #    time0 fixed at index_date + 210
+  # =========================
+  jin1_inclusion <- jin1_Eligibile %>%
+    filter(exclude == "include", jin_status %in% c("AKD", "nonAKD")) %>%
+    mutate(
+      jin_label = case_when(
+        jin_status == "nonAKD" ~ "nonAKD",
+        jin_status == "AKD" & `150_210recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 2 ~ "Non-Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` == 1 ~ "Recovery",
+        jin_status == "AKD" & `150_210recovery` == 0 & `90_150recovery` %in% c(0, 2) ~ "Non-Recovery",
+        TRUE ~ NA_character_
+      ),
+      jin_label = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery")),
+      index_plus_210 = index_date + 210
+    ) %>%
+    filter(!is.na(jin_label))
+  
+  # baseline eGFR nearest to day 210 within 150-210 days
+  time0_egfr_df <- jin1_inclusion %>%
+    mutate(
+      days_from_index = as.numeric(date - index_date),
+      dist_to_210 = abs(days_from_index - 210)
+    ) %>%
+    filter(days_from_index >= 150, days_from_index <= 210) %>%
+    group_by(id) %>%
+    arrange(dist_to_210, desc(date), .by_group = TRUE) %>%
+    slice(1) %>%
+    ungroup() %>%
+    transmute(
+      id,
+      time0_egfr = egfr,
+      time0_egfr_date = date
+    )
+  
+  jin1_inclusion <- jin1_inclusion %>%
+    mutate(
+      time0 = index_plus_210,
+      years_from_time0 = as.numeric(date - time0) / 365.25
+    ) %>%
+    left_join(time0_egfr_df, by = "id")
+  
+  # =========================
+  # 2) Longitudinal data
+  # =========================
+  akd_time_m <- jin1_inclusion %>%
+    filter(years_from_time0 >= 0)
+  
+  baseline_cov <- jin1_Eligibile %>%
+    filter(exclude == "include") %>%
+    group_by(id) %>%
+    arrange(index_date, .by_group = TRUE) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(arb_acei_use = if_else(arb == 1 | acei == 1, 1L, 0L)) %>%
+    dplyr::select(
+      id, age, sex, arb_acei_use,
+      dn1, dn3, dn4, dn5, dn6, dn7, dn8, dn9, dn10, dn12, dn13, dn14, dn15
+    )
+  
+  covars <- c(
+    "age","sex","arb_acei_use",
+    "dn1","dn3","dn4","dn5","dn6","dn7","dn8","dn9","dn10","dn12","dn13","dn14","dn15"
+  )
+  
+  longdat <- akd_time_m %>%
+    dplyr::select(-any_of(covars)) %>%
+    left_join(baseline_cov, by = "id") %>%
+    mutate(
+      age_c        = as.numeric(scale(age, center = TRUE, scale = FALSE)),
+      time0_egfr_c = as.numeric(scale(time0_egfr, center = TRUE, scale = FALSE)),
+      jin_label    = factor(jin_label, levels = c("nonAKD", "Recovery", "Non-Recovery"))
+    ) %>%
+    filter(!is.na(time0_egfr))
+  
+  # =========================
+  # 3) Common settings
+  # =========================
+  ctrl <- lmeControl(
+    maxIter   = 1e8,
+    msMaxIter = 1e8,
+    opt = "optim",
+    optimMethod = "L-BFGS-B"
+  )
+  
+  values_group <- c(
+    nonAKD         = "#95A5A6",
+    Recovery       = "#2ECC71",
+    `Non-Recovery` = "#E74C3C"
+  )
+  
+  labels_group <- c(
+    nonAKD         = "Non-AKD",
+    Recovery       = "AKD with recovery",
+    `Non-Recovery` = "AKD without recovery"
+  )
+  
+  # =========================
+  # 4) Functions
+  # =========================
+  
+  # ---- fit slope-adjusted model and extract bar data ----
+  make_bar_data <- function(dat, years_max = NULL, panel_label = "≤3 years") {
+    
+    dat_sub <- dat
+    if (!is.null(years_max)) {
+      dat_sub <- dat_sub %>% filter(years_from_time0 <= years_max)
+    }
+    
+    fit <- lme(
+      egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1 +
+        age_c + sex + arb_acei_use +
+        dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15 +
+        years_from_time0:(age_c + arb_acei_use +
+                            dn1 + dn3 + dn4 + dn5 + dn6 + dn7 + dn8 + dn9 + dn10 + dn12 + dn13 + dn14 + dn15),
+      random = list(id = pdSymm(~ 1 + years_from_time0)),
+      data = dat_sub,
+      na.action = na.omit,
+      method = "REML",
+      control = ctrl
+    )
+    
+    cf <- names(fixef(fit))
+    
+    v_slope <- function(g){
+      vec <- rep(0, length(cf)); names(vec) <- cf
+      if ("years_from_time0" %in% cf) vec["years_from_time0"] <- 1
+      if (g == "Recovery" && "years_from_time0:jin_labelRecovery" %in% cf) {
+        vec["years_from_time0:jin_labelRecovery"] <- 1
+      }
+      if (g == "Non-Recovery" && "years_from_time0:jin_labelNon-Recovery" %in% cf) {
+        vec["years_from_time0:jin_labelNon-Recovery"] <- 1
+      }
+      vec
+    }
+    
+    L <- rbind(
+      nonAKD         = v_slope("nonAKD"),
+      Recovery       = v_slope("Recovery"),
+      `Non-Recovery` = v_slope("Non-Recovery")
+    )
+    
+    ci_slope <- suppressMessages(confint(glht(fit, linfct = L)))
+    
+    df_bar <- tibble(
+      group    = rownames(L),
+      estimate = ci_slope$confint[, "Estimate"],
+      lower    = ci_slope$confint[, "lwr"],
+      upper    = ci_slope$confint[, "upr"]
+    ) %>%
+      mutate(group = factor(group, levels = c("nonAKD","Recovery","Non-Recovery")))
+    
+    # contrasts vs nonAKD
+    b  <- v_slope("nonAKD")
+    r  <- v_slope("Recovery")
+    nr <- v_slope("Non-Recovery")
+    
+    K <- rbind(
+      `Recovery − nonAKD`     = r  - b,
+      `Non-Recovery − nonAKD` = nr - b
+    )
+    
+    gl_contrast <- glht(fit, linfct = K)
+    ci_contrast <- suppressMessages(confint(gl_contrast))
+    sm_contrast <- suppressMessages(summary(gl_contrast))
+    
+    df_contrast <- tibble(
+      group      = c("Recovery","Non-Recovery"),
+      diff_value = ci_contrast$confint[, "Estimate"],
+      diff_lower = ci_contrast$confint[, "lwr"],
+      diff_upper = ci_contrast$confint[, "upr"],
+      diff_p     = sm_contrast$test$pvalues
+    )
+    
+    sample_sizes <- dat_sub %>%
+      distinct(id, jin_label) %>%
+      count(jin_label, name = "n") %>%
+      transmute(group = as.character(jin_label), n)
+    
+    df_bar <- df_bar %>%
+      left_join(sample_sizes, by = "group") %>%
+      left_join(df_contrast, by = "group") %>%
+      mutate(
+        panel = panel_label,
+        group = factor(group, levels = c("nonAKD","Recovery","Non-Recovery")),
+        x = c(1, 2, 3),
+        diff_label = case_when(
+          group == "nonAKD" ~ "Reference",
+          TRUE ~ sprintf("Diff: %.2f\n(%.2f, %.2f)", diff_value, diff_lower, diff_upper)
+        ),
+        p_label = case_when(
+          group == "nonAKD" ~ "Reference",
+          diff_p < 0.001 ~ "p<0.001",
+          diff_p < 0.01  ~ sprintf("p=%.3f", diff_p),
+          TRUE           ~ sprintf("p=%.2f", diff_p)
+        )
+      )
+    
+    list(fit = fit, df_bar = df_bar)
+  }
+  
+  # ---- observed delta eGFR ----
+  make_observed_data <- function(dat, years_max = NULL, panel_label = "≤3 years") {
+    
+    dt0 <- dat
+    if (!is.null(years_max)) {
+      dt0 <- dt0 %>% filter(years_from_time0 <= years_max)
+    }
+    
+    dt <- as.data.table(
+      dt0 %>%
+        dplyr::select(id, years_from_time0, egfr, jin_label)
+    )
+    
+    dt <- dt[!is.na(egfr)]
+    
+    if (!is.null(years_max)) {
+      # 3-year panel: every 0.25 year
+      target_timepoints <- seq(0, years_max, by = 0.25)
+      window_width <- 0.25 * 0.75
+    } else {
+      # all-period panel: every 0.5 year
+      max_time <- floor(max(dt$years_from_time0, na.rm = TRUE) * 2) / 2
+      max_time <- max(max_time, 12)
+      target_timepoints <- seq(0, max_time, by = 0.5)
+      window_width <- 0.5 * 0.75
+    }
+    
+    half_w <- window_width / 2
+    
+    ids <- unique(dt$id)
+    grid_dt <- CJ(id = ids, target_time = target_timepoints)
+    
+    setkey(dt, id, years_from_time0)
+    
+    window_data_obs <- dt[
+      grid_dt,
+      on = .(id, years_from_time0 = target_time),
+      roll = "nearest",
+      nomatch = 0L,
+      .(id,
+        target_time = i.target_time,
+        years_from_time0,
+        egfr,
+        jin_label)
+    ]
+    
+    window_data_obs <- window_data_obs[abs(years_from_time0 - target_time) <= half_w]
+    
+    base_dt <- window_data_obs[target_time == 0, .(baseline_egfr = egfr[1]), by = id]
+    wd2 <- merge(window_data_obs, base_dt, by = "id", all.x = FALSE, all.y = FALSE)
+    wd2[, delta_egfr := egfr - baseline_egfr]
+    
+    as_tibble(wd2) %>%
+      group_by(jin_label, target_time) %>%
+      summarise(
+        mean_delta = mean(delta_egfr, na.rm = TRUE),
+        sd         = sd(delta_egfr, na.rm = TRUE),
+        n          = sum(!is.na(delta_egfr)),
+        se         = sd / sqrt(n),
+        lwr        = mean_delta - 1.96 * se,
+        upr        = mean_delta + 1.96 * se,
+        .groups    = "drop"
+      ) %>%
+      mutate(
+        jin_label = factor(as.character(jin_label),
+                           levels = c("nonAKD","Recovery","Non-Recovery")),
+        panel = panel_label
+      )
+  }
+  
+  # ---- top panel ----
+  plot_top_panel <- function(plot_dat, y_limits, show_legend = FALSE) {
+    
+    max_x <- max(plot_dat$target_time, na.rm = TRUE)
+    
+    x_breaks <- if (max_x <= 3.01) {
+      c(0, 1, 2, 3)
+    } else {
+      c(0, 3, 6, 9, 12)
+    }
+    
+    ggplot(
+      plot_dat,
+      aes(x = target_time, y = mean_delta, color = jin_label, group = jin_label)
+    ) +
+      geom_line(linewidth = 0.9) +
+      geom_point(size = 1.8) +
+      geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.06, linewidth = 0.6) +
+      scale_color_manual(
+        values = values_group,
+        labels = labels_group,
+        name = "Group"
+      ) +
+      scale_x_continuous(
+        breaks = x_breaks,
+        limits = c(min(x_breaks), max(x_breaks)),
+        expand = expansion(mult = c(0.01, 0.02))
+      ) +
+      scale_y_continuous(
+        limits = y_limits,
+        breaks = pretty(y_limits, n = 4),
+        expand = expansion(mult = c(0.02, 0.04))
+      ) +
+      labs(
+        x = "Time from time0 (years)",
+        y = expression(paste(Delta, "eGFR (mL/min/1.73 m"^2, ")"))
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background  = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#D9D9D9", linewidth = 0.35),
+        panel.grid.minor = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+        strip.background = element_rect(fill = "white", color = "black", linewidth = 0.6),
+        strip.text = element_text(size = 11, face = "bold"),
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text  = element_text(size = 10, color = "black"),
+        legend.position = if (show_legend) "right" else "none",
+        legend.title = element_text(size = 11, face = "bold"),
+        legend.text  = element_text(size = 10),
+        legend.key = element_rect(fill = "white", color = NA),
+        plot.margin = margin(t = 3, r = 4, b = 2, l = 4)
+      )
+  }
+  
+  # ---- bottom panel ----
+  plot_bottom_panel <- function(df_bar, y_limits, show_legend = FALSE) {
+    
+    n_y    <- y_limits[2] - 0.10 * diff(y_limits)
+    diff_y <- y_limits[1] + 0.18 * diff(y_limits)
+    p_y    <- y_limits[1] + 0.04 * diff(y_limits)
+    
+    ggplot(df_bar, aes(x = x, y = estimate, fill = group)) +
+      geom_col(width = 0.62, color = NA) +
+      geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.16, linewidth = 0.7) +
+      geom_text(aes(y = n_y, label = paste0("n=", n)),
+                size = 3.5, fontface = "bold", color = "#333333") +
+      geom_text(aes(y = diff_y, label = diff_label),
+                size = 3.0, fontface = "italic", color = "#4D4D4D", lineheight = 0.95) +
+      geom_text(aes(y = p_y, label = p_label),
+                size = 3.1, fontface = "bold", color = "#333333") +
+      scale_fill_manual(
+        values = values_group,
+        breaks = c("nonAKD", "Recovery", "Non-Recovery"),
+        labels = labels_group,
+        name = "Group"
+      ) +
+      scale_x_continuous(
+        breaks = NULL,
+        limits = c(0.4, 3.6),
+        expand = expansion(mult = c(0.02, 0.02))
+      ) +
+      scale_y_continuous(
+        limits = y_limits,
+        breaks = c(-8, -4, 0, 4),
+        expand = expansion(mult = c(0.02, 0.02))
+      ) +
+      labs(
+        x = NULL,
+        y = "Mean change in eGFR\n(mL/min/1.73 m² per year)"
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background  = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+        strip.background = element_rect(fill = "white", color = "black", linewidth = 0.6),
+        strip.text = element_text(size = 11, face = "bold"),
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = if (show_legend) "bottom" else "none",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 11, face = "bold"),
+        legend.text  = element_text(size = 10),
+        legend.key.size = unit(0.9, "lines"),
+        legend.key   = element_rect(fill = "white", color = NA),
+        plot.margin  = margin(t = 2, r = 4, b = 2, l = 4)
+      ) +
+      guides(fill = guide_legend(nrow = 1, byrow = TRUE))
+  }
+  
+  # =========================
+  # 5) Create data for ≤3 years / All period
+  # =========================
+  res_3y  <- make_bar_data(longdat, years_max = 3,    panel_label = "≤3 years")
+  res_all <- make_bar_data(longdat, years_max = NULL, panel_label = "All period")
+  
+  bar_dat <- bind_rows(res_3y$df_bar, res_all$df_bar)
+  
+  obs_3y  <- make_observed_data(akd_time_m, years_max = 3,    panel_label = "≤3 years")
+  obs_all <- make_observed_data(akd_time_m, years_max = NULL, panel_label = "All period")
+  
+  plot_dat <- bind_rows(obs_3y, obs_all)
+  
+  # =========================
+  # 6) Common axis ranges
+  # =========================
+  top_ymin <- floor(min(plot_dat$lwr, na.rm = TRUE) - 1)
+  top_ymax <- ceiling(max(plot_dat$upr, na.rm = TRUE) + 1)
+  
+  # Supplement Figure 4 に寄せて少し固定
+  top_ymin <- min(top_ymin, -20)
+  top_ymax <- max(top_ymax, 0)
+  top_ylim <- c(top_ymin, top_ymax)
+  
+  bar_ymin <- floor(min(bar_dat$lower, na.rm = TRUE) - 3.5)
+  bar_ymax <- ceiling(max(bar_dat$upper, na.rm = TRUE) + 2.0)
+  
+  bar_ymin <- min(bar_ymin, -10)
+  bar_ymax <- max(bar_ymax, 4)
+  bar_ylim <- c(bar_ymin, bar_ymax)
+  
+  # =========================
+  # 7) Build top row
+  # =========================
+  p_top_3y <- plot_top_panel(
+    plot_dat %>% filter(panel == "≤3 years"),
+    y_limits = top_ylim,
+    show_legend = FALSE
+  ) +
+    ggtitle(NULL) +
+    facet_wrap(~panel, nrow = 1)
+  
+  p_top_all <- plot_top_panel(
+    plot_dat %>% filter(panel == "All period"),
+    y_limits = top_ylim,
+    show_legend = TRUE
+  ) +
+    ggtitle(NULL) +
+    facet_wrap(~panel, nrow = 1)
+  
+  # facet label を残すため 1枚ずつ作る
+  g_top_3y  <- p_top_3y
+  g_top_all <- p_top_all
+  
+  top_row <- g_top_3y + g_top_all + plot_layout(widths = c(1, 1.05))
+  
+  # =========================
+  # 8) Build bottom row
+  # =========================
+  p_bottom_3y <- plot_bottom_panel(
+    bar_dat %>% filter(panel == "≤3 years"),
+    y_limits = bar_ylim,
+    show_legend = FALSE
+  ) +
+    facet_wrap(~panel, nrow = 1)
+  
+  p_bottom_all <- plot_bottom_panel(
+    bar_dat %>% filter(panel == "All period"),
+    y_limits = bar_ylim,
+    show_legend = TRUE
+  ) +
+    facet_wrap(~panel, nrow = 1)
+  
+  bottom_row <- p_bottom_3y + p_bottom_all + plot_layout(widths = c(1, 1.05))
+  
+  # =========================
+  # 9) Add row titles (A / B)
+  # =========================
+  title_top <- ggplot() +
+    annotate("text", x = 0, y = 1, hjust = 0, vjust = 1,
+             label = "A  Observed change in eGFR from time0",
+             size = 5, fontface = "bold") +
+    theme_void() +
+    coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), clip = "off") +
+    theme(plot.margin = margin(t = 0, r = 0, b = -5, l = 2))
+  
+  title_bottom <- ggplot() +
+    annotate("text", x = 0, y = 1, hjust = 0, vjust = 1,
+             label = "B  Adjusted differences in annual eGFR change",
+             size = 5, fontface = "bold") +
+    theme_void() +
+    coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), clip = "off") +
+    theme(plot.margin = margin(t = 0, r = 0, b = -5, l = 2))
+  
+  # =========================
+  # 10) Combine final figure
+  # =========================
+  fig_combined <-
+    title_top /
+    top_row /
+    title_bottom /
+    bottom_row +
+    plot_layout(heights = c(0.06, 1.0, 0.06, 1.05))
+  
+  # =========================
+  # 11) Draw
+  # =========================
+  print(fig_combined)
+  
+  # =========================
+  # 12) Save
+  # =========================
+  outdir <- "X:/R/eGFRslope"
+  if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+  
+  # TIFF
+  ragg::agg_tiff(
+    filename = file.path(outdir, "SupplementFigure_landmark210_observed_delta_and_slope_3y_all.tiff"),
+    width = 260, height = 180, units = "mm", res = 600, compression = "lzw"
+  )
+  print(fig_combined)
+  dev.off()
+  
+  # PDF
+  ggsave(
+    filename = file.path(outdir, "SupplementFigure_landmark210_observed_delta_and_slope_3y_all.pdf"),
+    plot = fig_combined,
+    width = 260, height = 180, units = "mm",
+    device = cairo_pdf
+  )
+}
