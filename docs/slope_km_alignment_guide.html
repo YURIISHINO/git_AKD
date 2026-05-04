@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.27">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>slope_km_alignment_guide</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="slope_km_alignment_guide_files/libs/clipboard/clipboard.min.js"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/popper.min.js"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="slope_km_alignment_guide_files/libs/quarto-html/anchor.min.js"></script>
+<link href="slope_km_alignment_guide_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="slope_km_alignment_guide_files/libs/quarto-html/quarto-syntax-highlighting-ed96de9b727972fe78a7b5d16c58bf87.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="slope_km_alignment_guide_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="slope_km_alignment_guide_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="slope_km_alignment_guide_files/libs/bootstrap/bootstrap-d6a003b94517c951b2d65075d42fb01b.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="km解析とegfr-slope解析のサンプルサイズ不一致-解決ガイド" class="level1">
+<h1>KM解析とeGFR slope解析のサンプルサイズ不一致 — 解決ガイド</h1>
+<blockquote class="blockquote">
+<p>対象: eGFR slope landmark210解析の修正担当者 作成日: 2026-04-22</p>
+</blockquote>
+<hr>
+<section id="問題の構造-なぜnが合わないのか" class="level2">
+<h2 class="anchored" data-anchor-id="問題の構造-なぜnが合わないのか">1. 問題の構造: なぜNが合わないのか</h2>
+<p>KM（カプラン・マイヤー）解析とeGFR slope解析では、解析に必要なデータの性質が根本的に異なる。</p>
+<pre><code>KM解析（生存解析）
+  必要なもの: 患者ごとに「生存/死亡」の1つのイベント情報 + フォローアップ期間
+  → eGFR測定値は不要
+  → 対象: index_date+210以降に生存確認ができる全患者
+
+eGFR slope解析（縦断解析）
+  必要なもの: 患者ごとに複数回のeGFR測定値 + ベースラインeGFR
+  → 最低でもベースライン + 1回以上のeGFR測定が必要
+  → 対象: eGFRが繰り返し測定されている患者のみ</code></pre>
+<section id="現状のn関係" class="level3">
+<h3 class="anchored" data-anchor-id="現状のn関係">現状のN関係</h3>
+<pre><code>KM N  &lt;  オリジナルslope N  &gt;  landmark210 slope N</code></pre>
+<p><strong>KM N &lt; オリジナルslope N となる理由</strong>: オリジナルslope解析は動的time0（例: index_date+120日にmax eGFR）を使う。 ある患者がindex_date+120日にeGFR測定 → +130日にも測定あり → slope解析に寄与。 しかし+200日で通院中断 → index_date+210のランドマーク時点で追跡できない → KMでは除外（<code>time_years &lt; 0</code>）。</p>
+</section>
+<section id="n不一致の原因まとめ" class="level3">
+<h3 class="anchored" data-anchor-id="n不一致の原因まとめ">N不一致の原因まとめ</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 6%">
+<col style="width: 12%">
+<col style="width: 10%">
+<col style="width: 32%">
+<col style="width: 38%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>原因</th>
+<th>KM</th>
+<th>オリジナルslope</th>
+<th>landmark210 slope</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>ランドマーク要件</td>
+<td>index_date+210以降の生存確認が必要</td>
+<td>不要（動的time0）</td>
+<td>index_date+210以降のeGFR測定が必要</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>ベースラインeGFR</td>
+<td>不要</td>
+<td>必須（90-210日 or 0-90日）</td>
+<td>必須（150-210日のみ、狭い）</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>測定回数</td>
+<td>イベント情報1つで十分</td>
+<td>≥2回のeGFR</td>
+<td>≥2回のeGFR</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>KMから脱落するがslopeに入る患者: day 210前に追跡不能だがday 90-210にeGFR測定あり</li>
+<li>slopeから脱落するがKMに入る患者: day 210以降に生存確認ありだがeGFR測定が不十分</li>
+<li>landmark210はさらにベースラインeGFR取得窓（150-210日）が狭いためN最小</li>
+</ul>
+<p><strong>結論</strong>: N完全一致は原理的に不可能（KM=イベント解析 vs slope=縦断解析で、ランドマーク要件も異なる）。以下の3つの戦略で対処する。</p>
+<hr>
+</section>
+</section>
+<section id="戦略1-主解析のn差を透明に報告するコード変更なし" class="level2">
+<h2 class="anchored" data-anchor-id="戦略1-主解析のn差を透明に報告するコード変更なし">2. 戦略1: 主解析のN差を透明に報告する（コード変更なし）</h2>
+<section id="やること" class="level3">
+<h3 class="anchored" data-anchor-id="やること">やること</h3>
+<p>論文のMethods/Supplementに以下の趣旨を記載する。コード変更は不要。</p>
+</section>
+<section id="記載文言案英語methods向け" class="level3">
+<h3 class="anchored" data-anchor-id="記載文言案英語methods向け">記載文言案（英語、Methods向け）</h3>
+<blockquote class="blockquote">
+<p>The eGFR slope analysis included patients who had a valid baseline eGFR value and at least one subsequent eGFR measurement after the baseline timepoint. Sample sizes for the eGFR slope analysis therefore differ from those of the survival analysis, which requires only follow-up status (alive or dead) after the landmark at index date + 210 days.</p>
+</blockquote>
+</section>
+<section id="記載文言案英語supplemental-table向け" class="level3">
+<h3 class="anchored" data-anchor-id="記載文言案英語supplemental-table向け">記載文言案（英語、Supplemental Table向け）</h3>
+<blockquote class="blockquote">
+<p>Supplemental Table X shows the number of patients included in each analysis by group. Differences in sample size reflect the distinct data requirements: the Kaplan-Meier analysis requires only event status, whereas the eGFR slope analysis requires repeated eGFR measurements.</p>
+</blockquote>
+<hr>
+</section>
+</section>
+<section id="戦略2-concordant-cohort共通集団感度分析" class="level2">
+<h2 class="anchored" data-anchor-id="戦略2-concordant-cohort共通集団感度分析">3. 戦略2: Concordant cohort（共通集団）感度分析</h2>
+<section id="概要" class="level3">
+<h3 class="anchored" data-anchor-id="概要">概要</h3>
+<p>現状は <strong>KM N &lt; オリジナルslope N</strong> であるため、concordant cohortは <strong>KMとslopeの共通集団（intersection）</strong> を使う。</p>
+<pre><code>                ┌──────────────────────┐
+                │    slope解析対象者    │
+                │                      │
+                │   ┌──────────┐       │
+                │   │ 共通集団 │       │  ← day 210以前に追跡不能だが
+                │   │ (KM∩slope)       │    eGFR測定はある患者（slope only）
+                │   └──────────┘       │
+                └──────┼───────────────┘
+                       │
+                ┌──────┼──────┐
+                │  KM解析対象者│  ← day 210以降に生存確認ありだが
+                │             │    eGFR測定が不十分な患者（KM only）
+                └─────────────┘</code></pre>
+<p>2つの感度分析を実施する:</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 45%">
+<col style="width: 27%">
+<col style="width: 27%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>感度分析</th>
+<th>内容</th>
+<th>目的</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>A. Concordant slope</strong></td>
+<td>slope解析をKM対象者に限定</td>
+<td>「KMと同じ集団で見てもslope結果は変わらない」</td>
+</tr>
+<tr class="even">
+<td><strong>B. Concordant KM</strong></td>
+<td>KM解析をslope対象者に限定</td>
+<td>「slope集団で見てもKM結果は変わらない」</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="重要ポイント" class="level3">
+<h3 class="anchored" data-anchor-id="重要ポイント">重要ポイント</h3>
+<ul>
+<li><strong>KMのtime0</strong>: <code>index_date + 210</code> のまま変更なし（どちらの感度分析でも）</li>
+<li><strong>slopeのtime0</strong>: 動的time0のまま変更なし（どちらの感度分析でも）</li>
+<li><strong>変えるのは対象集団だけ</strong>。解析手法やランドマークは一切変えない。</li>
+<li><strong>選択バイアス</strong>: 共通集団はeGFR測定頻度が高く、かつday 210以降も追跡可能な集団に偏る（informative observation bias）。Limitationsで言及が必要。</li>
+</ul>
+</section>
+<section id="修正箇所a-km対象idの保存" class="level3">
+<h3 class="anchored" data-anchor-id="修正箇所a-km対象idの保存">修正箇所A: KM対象IDの保存</h3>
+<p><strong>ファイル</strong>: <code>recvsnon_recvsAKD.R</code> <strong>場所</strong>: L148の直後（メインのKM <code>dat_km</code> 確認の直後） <strong>理由</strong>: KM解析に含まれる患者のIDリストを保存し、slope側で使えるようにする</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Save KM cohort IDs for concordant analysis</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>km_ids <span class="ot">&lt;-</span> dat_km <span class="sc">%&gt;%</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">distinct</span>(id, group)</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">write_csv</span>(km_ids, <span class="fu">file.path</span>(<span class="fu">getwd</span>(), <span class="st">"km_cohort_ids.csv"</span>))</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"KM cohort IDs saved to km_cohort_ids.csv</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"KM N per group:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">table</span>(km_ids<span class="sc">$</span>group, <span class="at">useNA =</span> <span class="st">"ifany"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="修正箇所b-slope対象idの保存" class="level3">
+<h3 class="anchored" data-anchor-id="修正箇所b-slope対象idの保存">修正箇所B: slope対象IDの保存</h3>
+<p><strong>ファイル</strong>: <code>eGFRslope_confounding.R</code> <strong>場所</strong>: L253の直後（オリジナルslope解析の <code>sample_sizes</code> 計算の直後） <strong>理由</strong>: slope解析に含まれる患者のIDリストを保存する</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Save slope cohort IDs for concordant analysis</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>slope_ids_by_window <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  longdat <span class="sc">%&gt;%</span> <span class="fu">filter</span>(years_from_time0 <span class="sc">&lt;=</span> <span class="dv">1</span>) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">window =</span> <span class="st">"1y"</span>),</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>  longdat <span class="sc">%&gt;%</span> <span class="fu">filter</span>(years_from_time0 <span class="sc">&lt;=</span> <span class="dv">3</span>) <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">window =</span> <span class="st">"3y"</span>),</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>  longdat <span class="sc">%&gt;%</span> <span class="fu">mutate</span>(<span class="at">window =</span> <span class="st">"all"</span>)</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>) <span class="sc">%&gt;%</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">distinct</span>(id, jin_label, window)</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="fu">write_csv</span>(slope_ids_by_window, <span class="fu">file.path</span>(<span class="fu">getwd</span>(), <span class="st">"slope_cohort_ids.csv"</span>))</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Slope cohort IDs saved to slope_cohort_ids.csv</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="修正箇所c-concordant-slope感度分析slope-km患者に限定" class="level3">
+<h3 class="anchored" data-anchor-id="修正箇所c-concordant-slope感度分析slope-km患者に限定">修正箇所C: Concordant slope感度分析（slope → KM患者に限定）</h3>
+<p><strong>ファイル</strong>: <code>eGFRslope_confounding.R</code> <strong>場所</strong>: L253の直後（slope_ids保存の後） <strong>理由</strong>: KM解析対象者に限定してslope解析を再実行し、結果の頑健性を確認する</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ==========================================================</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Sensitivity: Concordant slope (restrict slope to KM patients)</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="co"># ==========================================================</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>km_ids <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="fu">file.path</span>(<span class="fu">getwd</span>(), <span class="st">"km_cohort_ids.csv"</span>))</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>longdat_concordant <span class="ot">&lt;-</span> longdat <span class="sc">%&gt;%</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(id <span class="sc">%in%</span> km_ids<span class="sc">$</span>id)</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">=== Concordant slope (restricted to KM patients) ===</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Full slope N:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(longdat <span class="sc">%&gt;%</span> <span class="fu">distinct</span>(id, jin_label) <span class="sc">%&gt;%</span> <span class="fu">count</span>(jin_label))</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">Concordant slope N:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(longdat_concordant <span class="sc">%&gt;%</span> <span class="fu">distinct</span>(id, jin_label) <span class="sc">%&gt;%</span> <span class="fu">count</span>(jin_label))</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Re-fit LME on concordant cohort (same model specification)</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Example for ≤1 year:</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="co"># fit_concordant_1y &lt;- lme(</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="co">#   egfr ~ years_from_time0 * jin_label + time0_egfr_c - 1 + ... ,</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co">#   random = list(id = pdSymm(~ 1 + years_from_time0)),</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="co">#   data = longdat_concordant %&gt;% filter(years_from_time0 &lt;= 1),</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="co">#   na.action = na.omit, method = "REML", control = ctrl</span></span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a><span class="co"># )</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="修正箇所d-concordant-km感度分析km-slope患者に限定" class="level3">
+<h3 class="anchored" data-anchor-id="修正箇所d-concordant-km感度分析km-slope患者に限定">修正箇所D: Concordant KM感度分析（KM → slope患者に限定）</h3>
+<p><strong>ファイル</strong>: <code>recvsnon_recvsAKD.R</code> <strong>場所</strong>: KM対象ID保存の直後 <strong>理由</strong>: slope解析対象者に限定してKM感度分析を実行する</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ==========================================================</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Sensitivity: Concordant KM (restrict KM to slope patients)</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="co"># ==========================================================</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>slope_ids <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="fu">file.path</span>(<span class="fu">getwd</span>(), <span class="st">"slope_cohort_ids.csv"</span>))</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Use "all" window for maximum overlap</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>slope_ids_all <span class="ot">&lt;-</span> slope_ids <span class="sc">%&gt;%</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(window <span class="sc">==</span> <span class="st">"all"</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">distinct</span>(id)</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>dat_km_concordant <span class="ot">&lt;-</span> dat_km <span class="sc">%&gt;%</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(id <span class="sc">%in%</span> slope_ids_all<span class="sc">$</span>id)</span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">=== Concordant KM (restricted to slope patients) ===</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Full KM N:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">table</span>(dat_km<span class="sc">$</span>group, <span class="at">useNA =</span> <span class="st">"ifany"</span>))</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">Concordant KM N:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">table</span>(dat_km_concordant<span class="sc">$</span>group, <span class="at">useNA =</span> <span class="st">"ifany"</span>))</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="co"># KM fit on concordant cohort</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">NOTE</span><span class="co">: time0 is still index_date + 210, unchanged</span></span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>fit_concordant <span class="ot">&lt;-</span> <span class="fu">survfit</span>(</span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>  <span class="fu">Surv</span>(time_years, primary_death) <span class="sc">~</span> group,</span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> dat_km_concordant</span>
+<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(fit_concordant)</span>
+<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a><span class="co"># Cox model on concordant cohort (same covariates as main analysis)</span></span>
+<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">NOTE</span><span class="co">: Use the same coxph() formula as your main Cox model</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="実行順序に関する注意" class="level3">
+<h3 class="anchored" data-anchor-id="実行順序に関する注意">実行順序に関する注意</h3>
+<p>concordant分析は双方のIDが必要なため、以下の順序で実行すること: 1. KM解析を実行 → <code>km_cohort_ids.csv</code> を保存（修正箇所A） 2. slope解析を実行 → <code>slope_cohort_ids.csv</code> を保存（修正箇所B） 3. slope concordant感度分析を実行（修正箇所C: KM IDを読み込む） 4. KM concordant感度分析を実行（修正箇所D: slope IDを読み込む）</p>
+</section>
+<section id="limitations記載文言案英語" class="level3">
+<h3 class="anchored" data-anchor-id="limitations記載文言案英語">Limitations記載文言案（英語）</h3>
+<blockquote class="blockquote">
+<p>In the concordant cohort sensitivity analyses, each analysis was restricted to patients included in both the survival and eGFR slope analyses (i.e., patients with both sufficient follow-up after the 210-day landmark and repeated eGFR measurements). This subgroup may be subject to selection bias, as it excludes patients with early loss to follow-up or insufficient laboratory monitoring.</p>
+</blockquote>
+<hr>
+</section>
+</section>
+<section id="戦略3-landmark210-slope解析のベースラインegfr取得改善" class="level2">
+<h2 class="anchored" data-anchor-id="戦略3-landmark210-slope解析のベースラインegfr取得改善">4. 戦略3: landmark210 slope解析のベースラインeGFR取得改善</h2>
+<section id="概要-1" class="level3">
+<h3 class="anchored" data-anchor-id="概要-1">概要</h3>
+<p>現在のlandmark210では <strong>150-210日の60日間</strong> しかベースラインeGFRを探していない。 これを <strong>階層的フォールバック</strong> に変更し、より多くの患者を取り込む。</p>
+</section>
+<section id="現行ロジックegfrslope_confounding.r-l2009-2024" class="level3">
+<h3 class="anchored" data-anchor-id="現行ロジックegfrslope_confounding.r-l2009-2024">現行ロジック（<code>eGFRslope_confounding.R</code> L2009-2024）</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># baseline eGFR nearest to day 210 within 150-210 days</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>time0_egfr_df <span class="ot">&lt;-</span> jin1_inclusion <span class="sc">%&gt;%</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    <span class="at">days_from_index =</span> <span class="fu">as.numeric</span>(date <span class="sc">-</span> index_date),</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">dist_to_210 =</span> <span class="fu">abs</span>(days_from_index <span class="sc">-</span> <span class="dv">210</span>)</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">%&gt;%</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(days_from_index <span class="sc">&gt;=</span> <span class="dv">150</span>, days_from_index <span class="sc">&lt;=</span> <span class="dv">210</span>) <span class="sc">%&gt;%</span>   <span class="co"># &lt;-- 150-210日のみ</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(id) <span class="sc">%&gt;%</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">arrange</span>(dist_to_210, <span class="fu">desc</span>(date), <span class="at">.by_group =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice</span>(<span class="dv">1</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ungroup</span>() <span class="sc">%&gt;%</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>    id,</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>    <span class="at">time0_egfr =</span> egfr,</span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>    <span class="at">time0_egfr_date =</span> date</span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a>  )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>問題点</strong>: 150-210日にeGFR測定がない患者は全員脱落。</p>
+</section>
+<section id="改善ロジック差し替え案" class="level3">
+<h3 class="anchored" data-anchor-id="改善ロジック差し替え案">改善ロジック（差し替え案）</h3>
+<p>L2009-2024を以下に差し替える。time0は <code>index_plus_210</code> のまま固定（ランドマーク）。 ベースラインeGFR（共変量として使用）の取得元を広げるだけ。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># baseline eGFR: hierarchical fallback</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 1: 150-210 days (nearest to day 210)</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 2:  90-150 days (nearest to day 150)</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 3:   0- 90 days (latest measurement)</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="co"># ========================================</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 1: 150-210 days</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>p1 <span class="ot">&lt;-</span> jin1_inclusion <span class="sc">%&gt;%</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">days_from_index =</span> <span class="fu">as.numeric</span>(date <span class="sc">-</span> index_date)) <span class="sc">%&gt;%</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(days_from_index <span class="sc">&gt;=</span> <span class="dv">150</span>, days_from_index <span class="sc">&lt;=</span> <span class="dv">210</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(id) <span class="sc">%&gt;%</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">arrange</span>(<span class="fu">abs</span>(days_from_index <span class="sc">-</span> <span class="dv">210</span>), <span class="fu">desc</span>(date), <span class="at">.by_group =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice</span>(<span class="dv">1</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ungroup</span>() <span class="sc">%&gt;%</span></span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(id, <span class="at">time0_egfr =</span> egfr, <span class="at">time0_egfr_date =</span> date, <span class="at">egfr_source =</span> <span class="st">"150-210d"</span>)</span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 2: 90-150 days (for patients NOT found in Priority 1)</span></span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a>p2 <span class="ot">&lt;-</span> jin1_inclusion <span class="sc">%&gt;%</span></span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(<span class="sc">!</span>id <span class="sc">%in%</span> p1<span class="sc">$</span>id) <span class="sc">%&gt;%</span></span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">days_from_index =</span> <span class="fu">as.numeric</span>(date <span class="sc">-</span> index_date)) <span class="sc">%&gt;%</span></span>
+<span id="cb9-22"><a href="#cb9-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(days_from_index <span class="sc">&gt;=</span> <span class="dv">90</span>, days_from_index <span class="sc">&lt;</span> <span class="dv">150</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-23"><a href="#cb9-23" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(id) <span class="sc">%&gt;%</span></span>
+<span id="cb9-24"><a href="#cb9-24" aria-hidden="true" tabindex="-1"></a>  <span class="fu">arrange</span>(<span class="fu">abs</span>(days_from_index <span class="sc">-</span> <span class="dv">150</span>), <span class="fu">desc</span>(date), <span class="at">.by_group =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-25"><a href="#cb9-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice</span>(<span class="dv">1</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-26"><a href="#cb9-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ungroup</span>() <span class="sc">%&gt;%</span></span>
+<span id="cb9-27"><a href="#cb9-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(id, <span class="at">time0_egfr =</span> egfr, <span class="at">time0_egfr_date =</span> date, <span class="at">egfr_source =</span> <span class="st">"90-150d"</span>)</span>
+<span id="cb9-28"><a href="#cb9-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-29"><a href="#cb9-29" aria-hidden="true" tabindex="-1"></a><span class="co"># Priority 3: 0-90 days (for patients NOT found in Priority 1 or 2)</span></span>
+<span id="cb9-30"><a href="#cb9-30" aria-hidden="true" tabindex="-1"></a>p3 <span class="ot">&lt;-</span> jin1_inclusion <span class="sc">%&gt;%</span></span>
+<span id="cb9-31"><a href="#cb9-31" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(<span class="sc">!</span>id <span class="sc">%in%</span> p1<span class="sc">$</span>id, <span class="sc">!</span>id <span class="sc">%in%</span> p2<span class="sc">$</span>id) <span class="sc">%&gt;%</span></span>
+<span id="cb9-32"><a href="#cb9-32" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">days_from_index =</span> <span class="fu">as.numeric</span>(date <span class="sc">-</span> index_date)) <span class="sc">%&gt;%</span></span>
+<span id="cb9-33"><a href="#cb9-33" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(days_from_index <span class="sc">&gt;=</span> <span class="dv">0</span>, days_from_index <span class="sc">&lt;=</span> <span class="dv">90</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-34"><a href="#cb9-34" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(id) <span class="sc">%&gt;%</span></span>
+<span id="cb9-35"><a href="#cb9-35" aria-hidden="true" tabindex="-1"></a>  <span class="fu">arrange</span>(<span class="fu">desc</span>(days_from_index), <span class="fu">desc</span>(date), <span class="at">.by_group =</span> <span class="cn">TRUE</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-36"><a href="#cb9-36" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice</span>(<span class="dv">1</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb9-37"><a href="#cb9-37" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ungroup</span>() <span class="sc">%&gt;%</span></span>
+<span id="cb9-38"><a href="#cb9-38" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(id, <span class="at">time0_egfr =</span> egfr, <span class="at">time0_egfr_date =</span> date, <span class="at">egfr_source =</span> <span class="st">"0-90d"</span>)</span>
+<span id="cb9-39"><a href="#cb9-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-40"><a href="#cb9-40" aria-hidden="true" tabindex="-1"></a><span class="co"># Combine (one row per patient, highest priority wins)</span></span>
+<span id="cb9-41"><a href="#cb9-41" aria-hidden="true" tabindex="-1"></a>time0_egfr_df <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(p1, p2, p3)</span>
+<span id="cb9-42"><a href="#cb9-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-43"><a href="#cb9-43" aria-hidden="true" tabindex="-1"></a><span class="co"># Diagnostic: how many patients from each source?</span></span>
+<span id="cb9-44"><a href="#cb9-44" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">Baseline eGFR source distribution:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb9-45"><a href="#cb9-45" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">table</span>(time0_egfr_df<span class="sc">$</span>egfr_source, <span class="at">useNA =</span> <span class="st">"ifany"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="なぜこの改善が有効か" class="level3">
+<h3 class="anchored" data-anchor-id="なぜこの改善が有効か">なぜこの改善が有効か</h3>
+<ul>
+<li><strong>time0（ランドマーク）は変えない</strong>: <code>index_date + 210</code> のまま（L2028）</li>
+<li><strong>変えるのはベースラインeGFRの取得元だけ</strong>: これはLMEモデルの共変量（<code>time0_egfr_c</code>）として使うもの。測定日がtime0から多少ずれていても、共変量調整として統計的に問題ない。</li>
+<li><strong>Nが増える</strong>: 150-210日にeGFRがない患者も、90-150日や0-90日の値で救済される。</li>
+</ul>
+</section>
+<section id="l2064のfilterはそのまま維持" class="level3">
+<h3 class="anchored" data-anchor-id="l2064のfilterはそのまま維持">L2064のfilterはそのまま維持</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">filter</span>(<span class="sc">!</span><span class="fu">is.na</span>(time0_egfr))   <span class="co"># L2064: これは維持</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>階層的フォールバックによって <code>time0_egfr</code> がNAになる患者が減るため、このfilterで脱落する患者数が自動的に減少する。</p>
+</section>
+<section id="注意-landmark210セクションは2箇所ある" class="level3">
+<h3 class="anchored" data-anchor-id="注意-landmark210セクションは2箇所ある">注意: landmark210セクションは2箇所ある</h3>
+<p><code>eGFRslope_confounding.R</code> 内に同じlandmark210ロジックが <strong>2箇所</strong> ある: - <strong>L2009-2024</strong>: 1つ目のlandmark210セクション（≤1年解析用） - <strong>L2475-2490</strong>: 2つ目のlandmark210セクション（別の解析ブロック）</p>
+<p>両方とも <code>filter(days_from_index &gt;= 150, days_from_index &lt;= 210)</code> を含む。 <strong>両箇所に同じ階層的フォールバックの改善を適用すること。</strong></p>
+<hr>
+</section>
+</section>
+<section id="実装の順序" class="level2">
+<h2 class="anchored" data-anchor-id="実装の順序">5. 実装の順序</h2>
+<ol type="1">
+<li><strong>戦略1</strong>: コード変更なし。論文の記載で対応。</li>
+<li><strong>戦略3</strong>: <code>eGFRslope_confounding.R</code> のlandmark210ベースラインeGFRロジックを改善 → N増加を確認</li>
+<li><strong>戦略2</strong>: slope対象IDを保存 → <code>recvsnon_recvsAKD.R</code> でconcordant KMを実行</li>
+</ol>
+<section id="確認ポイント" class="level3">
+<h3 class="anchored" data-anchor-id="確認ポイント">確認ポイント</h3>
+<ul class="task-list">
+<li><label><input type="checkbox">改善後のlandmark210 slope解析のN数を記録（各群: nonAKD, Recovery, Non-Recovery）</label></li>
+<li><label><input type="checkbox">KM N と slope N を比較し、共通集団のN数を確認</label></li>
+<li><label><input type="checkbox">concordant slope の結果がフルコホート slope と大きく乖離しないことを確認</label></li>
+<li><label><input type="checkbox">concordant KM の結果がフルコホート KM と大きく乖離しないことを確認</label></li>
+<li><label><input type="checkbox">各解析のN数を一覧表にまとめる（下記テンプレート参照）</label></li>
+</ul>
+</section>
+<section id="n数比較テーブルテンプレート" class="level3">
+<h3 class="anchored" data-anchor-id="n数比較テーブルテンプレート">N数比較テーブル（テンプレート）</h3>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>解析</th>
+<th>nonAKD</th>
+<th>Recovery</th>
+<th>Non-Recovery</th>
+<th>備考</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>KM（フルコホート）</td>
+<td></td>
+<td></td>
+<td></td>
+<td>主解析</td>
+</tr>
+<tr class="even">
+<td>オリジナルslope（動的time0）</td>
+<td></td>
+<td></td>
+<td></td>
+<td>主解析</td>
+</tr>
+<tr class="odd">
+<td>landmark210 slope（改善前）</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="even">
+<td>landmark210 slope（改善後）</td>
+<td></td>
+<td></td>
+<td></td>
+<td>戦略3適用後</td>
+</tr>
+<tr class="odd">
+<td><strong>共通集団（KM ∩ slope）</strong></td>
+<td></td>
+<td></td>
+<td></td>
+<td>上2つの交差</td>
+</tr>
+<tr class="even">
+<td>concordant KM（共通集団でKM）</td>
+<td></td>
+<td></td>
+<td></td>
+<td>感度分析</td>
+</tr>
+<tr class="odd">
+<td>concordant slope（共通集団でslope）</td>
+<td></td>
+<td></td>
+<td></td>
+<td>感度分析</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+</section>
+<section id="補足-なぜ完全一致は不要か" class="level2">
+<h2 class="anchored" data-anchor-id="補足-なぜ完全一致は不要か">6. 補足: なぜ完全一致は不要か</h2>
+<p>学術論文において、KMとeGFR slopeのNが異なることは一般的であり、査読者も理解している。 重要なのは:</p>
+<ol type="1">
+<li><strong>N差の理由が説明されていること</strong>（戦略1）</li>
+<li><strong>結果のロバスト性が示されていること</strong>（戦略2: concordant cohort）</li>
+<li><strong>不必要にNを減らしていないこと</strong>（戦略3: ウィンドウ拡大）</li>
+</ol>
+<p>KDIGOガイドライン関連の論文でも、生存解析と腎機能軌跡解析で異なるNを報告するのは標準的な手法である。</p>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
